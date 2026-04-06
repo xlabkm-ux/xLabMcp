@@ -68,7 +68,7 @@ Items:
 - Complexity: `M`
 - Source: implicit from verification contract
 - Deliver:
-  - reliable `mcpforunity://editor/state`
+  - reliable `xlabmcp://editor/state`
   - compile/domain reload blocking reasons
   - recommended retry timing
 
@@ -181,7 +181,7 @@ Items:
 - Complexity: `S`
 - Source: verification contract
 - Deliver:
-  - `mcpforunity://tests/{mode}`
+  - `xlabmcp://tests/{mode}`
   - test/category discovery
 
 ## Workflow 5 - Localization & Save Verification
@@ -198,7 +198,7 @@ Items:
 - Complexity: `M`
 - Source: `XLAB-009`
 - Deliver:
-  - `mcpforunity://localization/tables`
+  - `xlabmcp://localization/tables`
 
 ### XWF-014 - Localization key coverage
 
