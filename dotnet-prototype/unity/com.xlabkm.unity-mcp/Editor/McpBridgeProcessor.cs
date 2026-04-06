@@ -207,11 +207,32 @@ namespace XLab.UnityMcp.Editor
 
     private static (bool, string) PrefabCreate(string raw)
     {
-        var sourcePath = JsonString(raw, "sourceObjectPath");
+        var sourcePath = JsonString(raw, "sourceObjectPath")
+                         ?? JsonArgumentString(raw, "sourceObjectPath")
+                         ?? JsonString(raw, "sourcePath")
+                         ?? JsonArgumentString(raw, "sourcePath")
+                         ?? JsonString(raw, "sourceObjectName")
+                         ?? JsonArgumentString(raw, "sourceObjectName");
         var prefabPath = JsonString(raw, "prefabPath");
         if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(prefabPath)) return (false, "sourceObjectPath and prefabPath are required");
         var go = FindByPath(sourcePath!);
-        if (go == null) return (false, $"source not found: {sourcePath}");
+        if (go == null)
+        {
+            var createIfMissing = JsonBool(raw, "createIfMissing") ?? JsonBool(raw, "create_if_missing") ?? false;
+            if (!createIfMissing)
+            {
+                return (false, $"source not found: {sourcePath}");
+            }
+
+            var fallbackName = sourcePath!.Replace("\\", "/").Split('/').Last().Trim();
+            if (string.IsNullOrWhiteSpace(fallbackName))
+            {
+                fallbackName = "PrefabSource";
+            }
+
+            go = new GameObject(fallbackName);
+            Undo.RegisterCreatedObjectUndo(go, "MCP create missing prefab source");
+        }
         var prefab = PrefabUtility.SaveAsPrefabAsset(go, prefabPath!);
         AssetDatabase.Refresh();
         return prefab != null ? (true, $"Prefab created: {prefabPath}") : (false, "Prefab create failed");
@@ -871,8 +892,38 @@ namespace XLab.UnityMcp.Editor
 
     private static GameObject? FindByPath(string path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        path = path.Trim().Replace("\\", "/");
         var all = Resources.FindObjectsOfTypeAll<GameObject>().Where(g => g.scene.IsValid());
-        return all.FirstOrDefault(g => string.Equals(GetPath(g), path, StringComparison.Ordinal));
+        var allList = all.ToList();
+
+        // 1) Exact full hierarchy path.
+        var exact = allList.FirstOrDefault(g => string.Equals(GetPath(g), path, StringComparison.Ordinal));
+        if (exact != null)
+        {
+            return exact;
+        }
+
+        // 2) Unique exact-name match (common MCP usage passes object name instead of full path).
+        var nameMatches = allList.Where(g => string.Equals(g.name, path, StringComparison.Ordinal)).ToList();
+        if (nameMatches.Count == 1)
+        {
+            return nameMatches[0];
+        }
+
+        // 3) If a short path/name is provided, try matching trailing segment.
+        var tail = path.Contains("/") ? path.Split('/').Last() : path;
+        var tailMatches = allList.Where(g => string.Equals(g.name, tail, StringComparison.Ordinal)).ToList();
+        if (tailMatches.Count == 1)
+        {
+            return tailMatches[0];
+        }
+
+        return null;
     }
 
     private static string GetPath(GameObject go)
@@ -1028,6 +1079,22 @@ namespace XLab.UnityMcp.Editor
             .FirstOrDefault(t =>
                 string.Equals(t.Name, typeName, StringComparison.Ordinal) &&
                 (namespaceContains == null || (t.Namespace?.Contains(namespaceContains, StringComparison.Ordinal) ?? false)));
+    }
+
+    private static string BuildScriptableObjectTemplate(string className, string namespaceName)
+    {
+        var ns = string.IsNullOrWhiteSpace(namespaceName) ? "Breach.Data" : namespaceName.Trim();
+        return
+$@"using UnityEngine;
+
+namespace {ns}
+{{
+    [CreateAssetMenu(menuName = ""Breach/Data/{className}"", fileName = ""{className}"")]
+    public sealed class {className} : ScriptableObject
+    {{
+    }}
+}}
+";
     }
 
     private static void WriteTestsStatus(string payload)
