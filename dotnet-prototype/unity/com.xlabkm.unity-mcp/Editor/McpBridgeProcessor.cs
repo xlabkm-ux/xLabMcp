@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -829,7 +830,13 @@ namespace XLab.UnityMcp.Editor
         var statusPath = Path.Combine(BridgeRoot(), "test-results.json");
         if (File.Exists(statusPath))
         {
-            return (true, File.ReadAllText(statusPath));
+            var statusRaw = File.ReadAllText(statusPath);
+            var latestSummary = FindLatestUnityTestSummary();
+            if (latestSummary != null && statusRaw.Contains("\"state\":\"running\"", StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, latestSummary);
+            }
+            return (true, statusRaw);
         }
 
         var summary = FindLatestUnityTestSummary();
@@ -846,17 +853,19 @@ namespace XLab.UnityMcp.Editor
 
     private static string? JsonArgumentString(string json, string key)
     {
-        var args = Regex.Match(json, "\"arguments\"\\s*:\\s*\\{(?<args>[\\s\\S]*?)\\}\\s*(,|\\})", RegexOptions.IgnoreCase);
-        if (!args.Success)
+        var args = ExtractJsonObjectValue(json, "arguments");
+        if (string.IsNullOrWhiteSpace(args))
         {
             return null;
         }
-        return JsonString(args.Groups["args"].Value, key);
+        return JsonString(args, key);
     }
 
     private static bool? JsonBool(string json, string key)
     {
-        var m = Regex.Match(json, $"\"{Regex.Escape(key)}\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
+        var args = ExtractJsonObjectValue(json, "arguments");
+        var source = string.IsNullOrWhiteSpace(args) ? json : args + "\n" + json;
+        var m = Regex.Match(source, $"\"{Regex.Escape(key)}\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
         if (!m.Success) return null;
         return string.Equals(m.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase);
     }
@@ -864,7 +873,9 @@ namespace XLab.UnityMcp.Editor
     private static List<string> JsonStringArray(string json, string key)
     {
         var result = new List<string>();
-        var m = Regex.Match(json, $"\"{Regex.Escape(key)}\"\\s*:\\s*\\[(?<list>.*?)\\]", RegexOptions.Singleline);
+        var args = ExtractJsonObjectValue(json, "arguments");
+        var source = string.IsNullOrWhiteSpace(args) ? json : args + "\n" + json;
+        var m = Regex.Match(source, $"\"{Regex.Escape(key)}\"\\s*:\\s*\\[(?<list>.*?)\\]", RegexOptions.Singleline);
         if (!m.Success)
         {
             return result;
@@ -1131,12 +1142,138 @@ namespace {ns}
             return null;
         }
 
-        var xml = File.ReadAllText(file.FullName);
-        var passed = Regex.Matches(xml, "result=\"Passed\"").Count;
-        var failed = Regex.Matches(xml, "result=\"Failed\"").Count;
-        var skipped = Regex.Matches(xml, "result=\"Skipped\"").Count;
-        var total = passed + failed + skipped;
-        return $"{{\"state\":\"completed\",\"source\":\"{Escape(file.FullName)}\",\"total\":{total},\"passed\":{passed},\"failed\":{failed},\"skipped\":{skipped}}}";
+        try
+        {
+            var doc = XDocument.Load(file.FullName);
+            var root = doc.Root;
+            if (root == null)
+            {
+                return null;
+            }
+
+            var xmlText = File.ReadAllText(file.FullName);
+            var passed = ReadIntAttr(root, "passed")
+                         ?? Regex.Matches(xmlText, "result=\"Passed\"").Count;
+            var failed = ReadIntAttr(root, "failed")
+                         ?? Regex.Matches(xmlText, "result=\"Failed\"").Count;
+            var skipped = ReadIntAttr(root, "skipped")
+                          ?? Regex.Matches(xmlText, "result=\"Skipped\"").Count;
+            var total = ReadIntAttr(root, "total") ?? (passed + failed + skipped);
+            var duration = ReadDoubleAttr(root, "duration") ?? 0.0;
+
+            return $"{{\"state\":\"completed\",\"source\":\"{Escape(file.FullName)}\",\"total\":{total},\"passed\":{passed},\"failed\":{failed},\"skipped\":{skipped},\"duration\":{duration.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int? ReadIntAttr(XElement element, string attrName)
+    {
+        var raw = element.Attribute(attrName)?.Value;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        return int.TryParse(raw, out var value) ? value : null;
+    }
+
+    private static double? ReadDoubleAttr(XElement element, string attrName)
+    {
+        var raw = element.Attribute(attrName)?.Value;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        return double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
+    private static string? ExtractJsonObjectValue(string json, string key)
+    {
+        if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        var keyToken = $"\"{key}\"";
+        var keyIdx = json.IndexOf(keyToken, StringComparison.OrdinalIgnoreCase);
+        if (keyIdx < 0)
+        {
+            return null;
+        }
+
+        var colonIdx = json.IndexOf(':', keyIdx + keyToken.Length);
+        if (colonIdx < 0)
+        {
+            return null;
+        }
+
+        var i = colonIdx + 1;
+        while (i < json.Length && char.IsWhiteSpace(json[i]))
+        {
+            i++;
+        }
+
+        if (i >= json.Length || json[i] != '{')
+        {
+            return null;
+        }
+
+        var start = i;
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (; i < json.Length; i++)
+        {
+            var ch = json[i];
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if (ch == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (ch == '{')
+            {
+                depth++;
+                continue;
+            }
+
+            if (ch == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return json.Substring(start, i - start + 1);
+                }
+            }
+        }
+
+        return null;
     }
 
     private static bool HasAnyGraphArg(GraphArgs args)
