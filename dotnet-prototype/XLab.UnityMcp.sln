@@ -1,0 +1,38 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XLab.UnityMcp.Protocol", "src\XLab.UnityMcp.Protocol\XLab.UnityMcp.Protocol.csproj", "{A2A098D1-AB2E-4B79-9A4A-F8E962F0862A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XLab.UnityMcp.Server", "src\XLab.UnityMcp.Server\XLab.UnityMcp.Server.csproj", "{0A2A7A4A-1D70-4E1E-A5A8-316279D35A44}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{4DE4AA32-5050-433F-A4A7-453F10C0740D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XLab.UnityMcp.Server.Tests", "tests\XLab.UnityMcp.Server.Tests\XLab.UnityMcp.Server.Tests.csproj", "{2E097EE4-2605-4303-8BA5-4757C055CC74}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A2A098D1-AB2E-4B79-9A4A-F8E962F0862A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2A098D1-AB2E-4B79-9A4A-F8E962F0862A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2A098D1-AB2E-4B79-9A4A-F8E962F0862A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2A098D1-AB2E-4B79-9A4A-F8E962F0862A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0A2A7A4A-1D70-4E1E-A5A8-316279D35A44}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A2A7A4A-1D70-4E1E-A5A8-316279D35A44}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A2A7A4A-1D70-4E1E-A5A8-316279D35A44}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0A2A7A4A-1D70-4E1E-A5A8-316279D35A44}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2E097EE4-2605-4303-8BA5-4757C055CC74}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2E097EE4-2605-4303-8BA5-4757C055CC74}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2E097EE4-2605-4303-8BA5-4757C055CC74}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2E097EE4-2605-4303-8BA5-4757C055CC74}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2E097EE4-2605-4303-8BA5-4757C055CC74} = {4DE4AA32-5050-433F-A4A7-453F10C0740D}
+	EndGlobalSection
+EndGlobal

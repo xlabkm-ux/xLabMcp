@@ -1,0 +1,10 @@
+﻿{
+  "name": "com.xlabkm.unity-mcp",
+  "version": "0.1.0",
+  "displayName": "XLab Unity MCP",
+  "description": "Unity Editor bridge for local MCP server integration.",
+  "unity": "2021.3",
+  "author": {
+    "name": "XLab"
+  }
+}
