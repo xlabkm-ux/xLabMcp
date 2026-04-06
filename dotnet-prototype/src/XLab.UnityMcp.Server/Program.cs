@@ -675,79 +675,55 @@ public sealed class McpRequestDispatcher
 
     private static Dictionary<string, JsonObject> BuildToolSchemas()
     {
-        JsonObject Obj(params (string key, JsonNode schema)[] props)
+        var contractPath = ResolveContractPath();
+        if (contractPath == null)
         {
-            var p = new JsonObject();
-            foreach (var (key, schema) in props) p[key] = schema;
-            return p;
-        }
-        JsonObject S(string type, params string[] en)
-        {
-            var o = new JsonObject { ["type"] = type };
-            if (en.Length > 0) o["enum"] = new JsonArray(en.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
-            return o;
-        }
-        JsonObject Schema(JsonObject props, bool additional = false, params string[] required)
-        {
-            var o = new JsonObject
-            {
-                ["type"] = "object",
-                ["properties"] = props,
-                ["additionalProperties"] = additional
-            };
-            if (required.Length > 0)
-            {
-                o["required"] = new JsonArray(required.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
-            }
-            return o;
+            throw new InvalidOperationException("BREACH contract file not found: contracts/breach-tools.schema.json");
         }
 
-        return new Dictionary<string, JsonObject>(StringComparer.Ordinal)
+        var node = JsonNode.Parse(File.ReadAllText(contractPath)) as JsonObject;
+        var tools = node?["tools"] as JsonObject;
+        if (tools == null)
         {
-            ["project_root.set"] = Schema(Obj(("projectRoot", S("string"))), required: new[] { "projectRoot" }),
-            ["project.info"] = Schema(Obj(("projectRoot", S("string"))), additional: true),
-            ["editor.state"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["project.health_check"] = Schema(Obj(("projectRoot", S("string"))), additional: true),
-            ["asset.create_folder"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("folderPath", S("string"))), additional: true),
-            ["asset.exists"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string"))), additional: true, required: new[] { "path" }),
-            ["asset.refresh"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["asset.list_modified"] = Schema(Obj(("projectRoot", S("string")), ("hours", S("integer")), ("waitMs", S("integer"))), additional: true),
-            ["scene.create"] = Schema(Obj(("projectRoot", S("string")), ("sceneName", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["scene.open"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "scenePath" }),
-            ["scene.save"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["scene.validate_refs"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["hierarchy.list"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["hierarchy.find"] = Schema(Obj(("projectRoot", S("string")), ("query", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "query" }),
-            ["gameobject.create"] = Schema(Obj(("projectRoot", S("string")), ("name", S("string")), ("parentPath", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["gameobject.modify"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("operation", S("string", "rename", "set_active")), ("newName", S("string")), ("active", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath", "operation" }),
-            ["component.add"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("componentType", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath", "componentType" }),
-            ["component.set"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("active", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath" }),
-            ["prefab.create"] = Schema(Obj(("projectRoot", S("string")), ("sourceObjectPath", S("string")), ("sourcePath", S("string")), ("sourceObjectName", S("string")), ("prefabPath", S("string")), ("createIfMissing", S("boolean")), ("strictSourceRequired", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
-            ["prefab.open"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
-            ["prefab.save"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["prefab.instantiate"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
-            ["prefab.validate"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["script.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("scriptName", S("string")), ("path", S("string")), ("mode", S("string", "create", "append", "replace", "overwrite")), ("text", S("string")), ("oldText", S("string"))), additional: true),
-            ["scriptableobject.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("name", S("string")), ("scriptName", S("string")), ("folder", S("string")), ("namespace", S("string")), ("mode", S("string", "create", "append", "overwrite")), ("contents", S("string")), ("text", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["graph.open_or_create"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("graph_name", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["graph.connect"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("fromNodeId", S("string")), ("sourceNodeId", S("string")), ("toNodeId", S("string")), ("targetNodeId", S("string")), ("fromPort", S("string")), ("toPort", S("string")), ("kind", S("string", "control", "value")), ("from", S("string")), ("to", S("string")), ("source", S("string")), ("target", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["graph.edit"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("operation", S("string", "add_node", "remove_node", "set_node")), ("nodeId", S("string")), ("unitType", S("string")), ("x", S("number")), ("y", S("number")), ("waitMs", S("integer"))), additional: true),
-            ["graph.validate"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["editor.compile_status"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["console.read"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["screenshot.scene"] = Schema(Obj(("projectRoot", S("string")), ("outputPath", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["screenshot.game"] = Schema(Obj(("projectRoot", S("string")), ("outputPath", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["tests.run_editmode"] = Schema(Obj(("projectRoot", S("string")), ("mode", S("string", "EditMode", "All")), ("waitMs", S("integer"))), additional: true),
-            ["tests.run_all"] = Schema(Obj(("projectRoot", S("string")), ("mode", S("string", "All")), ("waitMs", S("integer"))), additional: true),
-            ["tests.results"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["build_settings_scenes"] = Schema(Obj(("projectRoot", S("string")), ("action", S("string", "get", "set")), ("scenes", S("array")), ("waitMs", S("integer"))), additional: true),
-            ["playmode.enter"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["playmode.exit"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["ui.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("name", S("string")), ("mode", S("string", "create", "append", "overwrite")), ("contents", S("string")), ("text", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["localization.key_add"] = Schema(Obj(("projectRoot", S("string")), ("key", S("string")), ("value", S("string")), ("defaultValue", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "key" }),
-            ["change.summary"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
-            ["project.docs_update"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("docPath", S("string")), ("line", S("string")), ("text", S("string")), ("contents", S("string")), ("mode", S("string", "append", "overwrite")), ("waitMs", S("integer"))), additional: true),
+            throw new InvalidOperationException($"Invalid contract file '{contractPath}': missing tools object.");
+        }
+
+        var result = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var kv in tools)
+        {
+            if (kv.Value is JsonObject schema)
+            {
+                result[kv.Key] = schema;
+            }
+        }
+
+        if (result.Count == 0)
+        {
+            throw new InvalidOperationException($"Invalid contract file '{contractPath}': no tool schemas.");
+        }
+        return result;
+    }
+
+    private static string? ResolveContractPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "contracts", "breach-tools.schema.json"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "contracts", "breach-tools.schema.json"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "contracts", "breach-tools.schema.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "contracts", "breach-tools.schema.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "dotnet-prototype", "contracts", "breach-tools.schema.json"),
         };
+
+        foreach (var path in candidates.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        return null;
     }
 }
 

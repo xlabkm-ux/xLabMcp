@@ -47,6 +47,20 @@ public sealed class DispatcherTests
     }
 
     [Fact]
+    public void BuildToolsList_MatchesContractToolSet()
+    {
+        var result = _dispatcher.BuildToolsList();
+        var runtime = result.Tools.Select(t => t.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
+        var contractPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "contracts", "breach-tools.schema.json"));
+        Assert.True(File.Exists(contractPath), $"Contract not found: {contractPath}");
+        using var doc = JsonDocument.Parse(File.ReadAllText(contractPath));
+        var tools = doc.RootElement.GetProperty("tools").EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
+        Assert.Equal(tools, runtime);
+    }
+
+    [Fact]
     public void HandleToolCall_ProjectRootSet_AllowsSubsequentAliasCallsWithoutProjectRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));

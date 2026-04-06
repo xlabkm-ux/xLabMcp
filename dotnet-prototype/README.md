@@ -6,6 +6,7 @@
 - `src/XLab.UnityMcp.Server` - .NET console app, MCP host через stdio JSON-RPC
 - `unity/com.xlabkm.unity-mcp` - Unity Editor package (стартовый bridge)
 - `contracts/breach-tools.schema.json` - формализованный JSON schema контракт для 23 шагов BREACH
+  - теперь это единый источник истины для `tools/list` и runtime-валидации входных аргументов в сервере
 
 ## Что умеет сервер v0.3.0 (Breach Pipeline)
 
