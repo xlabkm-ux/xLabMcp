@@ -108,6 +108,14 @@ namespace XLab.UnityMcp.Editor
                 "graph.connect" => GraphConnect(raw),
                 "graph.edit" => GraphEdit(raw),
                 "graph.validate" => GraphValidate(raw),
+                "ui.create_or_edit" => UiCreateOrEdit(raw),
+                "localization.key_add" => LocalizationKeyAdd(raw),
+                "scriptableobject.create_or_edit" => ScriptableObjectCreateOrEdit(raw),
+                "scene.validate_refs" => SceneValidateRefs(raw),
+                "prefab.validate" => PrefabValidate(raw),
+                "asset.list_modified" => AssetListModified(raw),
+                "change.summary" => ChangeSummary(raw),
+                "project.docs_update" => ProjectDocsUpdate(raw),
                 _ => (false, $"Unsupported command: {command}"),
             };
         }
@@ -425,13 +433,228 @@ namespace XLab.UnityMcp.Editor
         var load = LoadGraph(graphPath);
         if (!load.Success)
         {
-            return (false, load.Message);
+            // Bridge-only callers may validate before graph is created. Keep this non-fatal.
+            return (true, $"graph.validate: exists=false; path={graphPath}; reason={load.Message}");
         }
 
         var labels = AssetDatabase.GetLabels(load.Asset!);
         var edges = labels.Count(l => l.StartsWith("mcp-edge:", StringComparison.Ordinal));
         var edits = labels.Count(l => l.StartsWith("mcp-edit:", StringComparison.Ordinal));
         return (true, $"graph.validate: assetType={load.Asset!.GetType().FullName}; edges={edges}; edits={edits}; path={graphPath}");
+    }
+
+    private static (bool, string) UiCreateOrEdit(string raw)
+    {
+        var relativePath = JsonArgumentString(raw, "path");
+        var name = JsonArgumentString(raw, "name") ?? "UIScreen";
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            relativePath = $"Assets/UI/{Regex.Replace(name, @"[^A-Za-z0-9_.-]", "_")}.uxml";
+        }
+
+        var normalized = relativePath.Replace("\\", "/");
+        if (!normalized.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "path must be under Assets/");
+        }
+
+        var full = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), normalized);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var mode = (JsonArgumentString(raw, "mode") ?? "create").ToLowerInvariant();
+        var contents = JsonArgumentString(raw, "contents") ?? JsonArgumentString(raw, "text") ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(contents))
+        {
+            contents = "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:VisualElement name=\"root\" /></ui:UXML>\n";
+        }
+
+        if (mode == "append" && File.Exists(full))
+        {
+            File.AppendAllText(full, contents, Encoding.UTF8);
+        }
+        else
+        {
+            File.WriteAllText(full, contents, Encoding.UTF8);
+        }
+
+        AssetDatabase.Refresh();
+        return (true, $"ui.create_or_edit: {normalized}");
+    }
+
+    private static (bool, string) LocalizationKeyAdd(string raw)
+    {
+        var key = JsonArgumentString(raw, "key");
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return (false, "key is required");
+        }
+
+        var value = JsonArgumentString(raw, "value") ?? JsonArgumentString(raw, "defaultValue") ?? key;
+        var path = JsonArgumentString(raw, "path") ?? "Assets/Localization/keys.csv";
+        path = path.Replace("\\", "/");
+        if (!path.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "path must be under Assets/");
+        }
+
+        var full = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var lines = File.Exists(full) ? File.ReadAllLines(full).ToList() : new List<string>();
+        if (lines.Count == 0)
+        {
+            lines.Add("key,value");
+        }
+
+        var prefix = key + ",";
+        var idx = lines.FindIndex(l => l.StartsWith(prefix, StringComparison.Ordinal));
+        var next = $"{key},{value.Replace(",", "\\,")}";
+        if (idx >= 0) lines[idx] = next; else lines.Add(next);
+
+        File.WriteAllLines(full, lines, Encoding.UTF8);
+        AssetDatabase.Refresh();
+        return (true, $"localization.key_add: key={key}; path={path}");
+    }
+
+    private static (bool, string) ScriptableObjectCreateOrEdit(string raw)
+    {
+        var name = JsonArgumentString(raw, "name") ?? JsonArgumentString(raw, "scriptName") ?? "GameDataConfig";
+        var folder = JsonArgumentString(raw, "folder") ?? "Assets/Scripts";
+        var namespaceName = JsonArgumentString(raw, "namespace") ?? string.Empty;
+        var safeName = Regex.Replace(name, @"[^A-Za-z0-9_]", "_");
+        var normalizedFolder = folder.Replace("\\", "/");
+        if (!normalizedFolder.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "folder must be under Assets/");
+        }
+
+        var relativePath = $"{normalizedFolder}/{safeName}.cs";
+        var full = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var userContents = JsonArgumentString(raw, "contents") ?? JsonArgumentString(raw, "text");
+        var contents = !string.IsNullOrWhiteSpace(userContents)
+            ? userContents
+            : BuildScriptableObjectTemplate(safeName, namespaceName);
+
+        var mode = (JsonArgumentString(raw, "mode") ?? "create").ToLowerInvariant();
+        if (mode == "append" && File.Exists(full))
+        {
+            File.AppendAllText(full, contents, Encoding.UTF8);
+        }
+        else
+        {
+            File.WriteAllText(full, contents, Encoding.UTF8);
+        }
+
+        AssetDatabase.Refresh();
+        return (true, $"scriptableobject.create_or_edit: {relativePath}");
+    }
+
+    private static (bool, string) SceneValidateRefs(string raw)
+    {
+        var scenePath = JsonArgumentString(raw, "scenePath") ?? JsonArgumentString(raw, "path");
+        if (string.IsNullOrWhiteSpace(scenePath))
+        {
+            return (false, "scenePath is required");
+        }
+        scenePath = scenePath.Replace("\\", "/");
+        if (!scenePath.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "scenePath must be under Assets/");
+        }
+
+        var full = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), scenePath);
+        if (!File.Exists(full))
+        {
+            return (false, $"scene not found: {scenePath}");
+        }
+
+        var text = File.ReadAllText(full);
+        var missingScriptMarkers = Regex.Matches(text, @"m_Script:\s*\{fileID:\s*0").Count;
+        return (true, $"scene.validate_refs: exists=true; missingScriptMarkers={missingScriptMarkers}; path={scenePath}");
+    }
+
+    private static (bool, string) PrefabValidate(string raw)
+    {
+        var prefabPath = JsonArgumentString(raw, "prefabPath") ?? JsonArgumentString(raw, "path");
+        if (string.IsNullOrWhiteSpace(prefabPath))
+        {
+            return (false, "prefabPath is required");
+        }
+        prefabPath = prefabPath.Replace("\\", "/");
+        if (!prefabPath.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "prefabPath must be under Assets/");
+        }
+
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        return prefab == null
+            ? (false, $"prefab not found: {prefabPath}")
+            : (true, $"prefab.validate: ok; path={prefabPath}");
+    }
+
+    private static (bool, string) AssetListModified(string raw)
+    {
+        var hours = 24;
+        var hoursRaw = JsonArgumentString(raw, "hours");
+        if (!string.IsNullOrWhiteSpace(hoursRaw))
+        {
+            int.TryParse(hoursRaw, out hours);
+            if (hours <= 0) hours = 24;
+        }
+
+        var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var assetsRoot = Path.Combine(root, "Assets");
+        if (!Directory.Exists(assetsRoot))
+        {
+            return (true, "asset.list_modified: []");
+        }
+
+        var threshold = DateTime.UtcNow.AddHours(-hours);
+        var files = Directory.GetFiles(assetsRoot, "*.*", SearchOption.AllDirectories)
+            .Where(f => !f.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new FileInfo(f))
+            .Where(fi => fi.LastWriteTimeUtc >= threshold)
+            .OrderByDescending(fi => fi.LastWriteTimeUtc)
+            .Take(200)
+            .Select(fi => fi.FullName.Replace(root + Path.DirectorySeparatorChar, string.Empty).Replace("\\", "/"))
+            .ToList();
+
+        return (true, "asset.list_modified:\n" + string.Join("\n", files));
+    }
+
+    private static (bool, string) ChangeSummary(string raw)
+    {
+        var listed = AssetListModified(raw).Item2;
+        var lines = listed.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var count = Math.Max(0, lines.Length - 1);
+        return (true, $"change.summary: modifiedAssets={count}");
+    }
+
+    private static (bool, string) ProjectDocsUpdate(string raw)
+    {
+        var path = JsonArgumentString(raw, "path") ?? JsonArgumentString(raw, "docPath") ?? "Docs/ProjectNotes.md";
+        path = path.Replace("\\", "/");
+        var normalized = path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Docs/", StringComparison.Ordinal)
+            ? path
+            : $"Docs/{path}";
+        var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var full = Path.Combine(root, normalized);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var text = JsonArgumentString(raw, "text") ?? JsonArgumentString(raw, "contents") ?? string.Empty;
+        var mode = (JsonArgumentString(raw, "mode") ?? "append").ToLowerInvariant();
+        if (mode == "overwrite")
+        {
+            File.WriteAllText(full, text, Encoding.UTF8);
+        }
+        else
+        {
+            File.AppendAllText(full, text + Environment.NewLine, Encoding.UTF8);
+        }
+        AssetDatabase.Refresh();
+        return (true, $"project.docs_update: {normalized}");
     }
 
     private static (bool, string) TestsRun(string raw)
