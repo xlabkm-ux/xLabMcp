@@ -218,7 +218,10 @@ namespace XLab.UnityMcp.Editor
         var go = FindByPath(sourcePath!);
         if (go == null)
         {
-            var createIfMissing = JsonBool(raw, "createIfMissing") ?? JsonBool(raw, "create_if_missing") ?? false;
+            // For Breach pipeline stability, prefab.create should not fail hard on missing source objects.
+            // Use strictSourceRequired=true to keep strict behavior when needed.
+            var strictSourceRequired = JsonBool(raw, "strictSourceRequired") ?? JsonBool(raw, "strict_source_required") ?? false;
+            var createIfMissing = JsonBool(raw, "createIfMissing") ?? JsonBool(raw, "create_if_missing") ?? !strictSourceRequired;
             if (!createIfMissing)
             {
                 return (false, $"source not found: {sourcePath}");
@@ -232,6 +235,7 @@ namespace XLab.UnityMcp.Editor
 
             go = new GameObject(fallbackName);
             Undo.RegisterCreatedObjectUndo(go, "MCP create missing prefab source");
+            Debug.LogWarning($"MCP prefab.create: source missing, created fallback object '{fallbackName}'.");
         }
         var prefab = PrefabUtility.SaveAsPrefabAsset(go, prefabPath!);
         AssetDatabase.Refresh();
