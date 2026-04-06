@@ -88,14 +88,14 @@ public sealed class McpRequestDispatcher
             "graph.connect" => Bridge("graph.connect", a),
             "graph.edit" => Bridge("graph.edit", a),
             "graph.validate" => Bridge("graph.validate", a),
-            "scene.validate_refs" => SceneValidateRefs(a),
-            "prefab.validate" => PrefabValidate(a),
-            "scriptableobject.create_or_edit" => ScriptableObjectCreateOrEdit(a),
-            "ui.create_or_edit" => UiCreateOrEdit(a),
-            "localization.key_add" => LocalizationKeyAdd(a),
-            "asset.list_modified" => AssetListModified(a),
-            "change.summary" => ChangeSummary(a),
-            "project.docs_update" => ProjectDocsUpdate(a),
+            "scene.validate_refs" => Bridge("scene.validate_refs", a),
+            "prefab.validate" => Bridge("prefab.validate", a),
+            "scriptableobject.create_or_edit" => Bridge("scriptableobject.create_or_edit", a),
+            "ui.create_or_edit" => Bridge("ui.create_or_edit", a),
+            "localization.key_add" => Bridge("localization.key_add", a),
+            "asset.list_modified" => Bridge("asset.list_modified", a),
+            "change.summary" => Bridge("change.summary", a),
+            "project.docs_update" => Bridge("project.docs_update", a),
             _ => Err($"Unknown tool: {name}")
         };
     }

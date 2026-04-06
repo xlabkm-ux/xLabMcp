@@ -275,11 +275,20 @@ public sealed class DispatcherTests
     [InlineData("asset.refresh")]
     [InlineData("console.read")]
     [InlineData("screenshot.scene")]
+    [InlineData("screenshot.game")]
     [InlineData("tests.run_editmode")]
     [InlineData("tests.run_all")]
     [InlineData("tests.results")]
     [InlineData("playmode.enter")]
     [InlineData("playmode.exit")]
+    [InlineData("scene.validate_refs")]
+    [InlineData("prefab.validate")]
+    [InlineData("scriptableobject.create_or_edit")]
+    [InlineData("ui.create_or_edit")]
+    [InlineData("localization.key_add")]
+    [InlineData("asset.list_modified")]
+    [InlineData("change.summary")]
+    [InlineData("project.docs_update")]
     public void HandleToolCall_BridgeTools_QueueCommand(string toolName)
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
