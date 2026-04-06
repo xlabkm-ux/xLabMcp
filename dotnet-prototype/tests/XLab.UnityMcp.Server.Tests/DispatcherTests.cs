@@ -1,4 +1,6 @@
-﻿using System.Text.Json;`r`nusing System.Text.Json.Nodes;`r`nusing Xunit;
+﻿using System.Text.Json;
+using System.Text.Json.Nodes;
+using Xunit;
 using XLab.UnityMcp.Protocol;
 
 namespace XLab.UnityMcp.Server.Tests;
@@ -418,13 +420,13 @@ public sealed class DispatcherTests
         }
     }
     [Fact]
-    public void HandleToolCall_BridgeRoundtrip_ReturnsBridgeResponse()
+    public async Task HandleToolCall_BridgeRoundtrip_ReturnsBridgeResponse()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
-            using var setDoc = JsonDocument.Parse($"""
+            using var setDoc = JsonDocument.Parse($$"""
             {
               "params": {
                 "name": "project_root.set",
@@ -477,7 +479,7 @@ public sealed class DispatcherTests
             });
 
             var result = _dispatcher.HandleToolCall(callDoc.RootElement);
-            bridgeTask.Wait();
+            await bridgeTask;
 
             Assert.False(result.IsError);
             Assert.Contains("bridge-ok", result.Content[0].Text);
@@ -491,4 +493,6 @@ public sealed class DispatcherTests
         }
     }
 }
+
+
 
