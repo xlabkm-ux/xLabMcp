@@ -1,4 +1,4 @@
-﻿# XLabMcp
+﻿# xLabMcp
 
 Clean repository for the XLab Unity MCP server prototype.
 
