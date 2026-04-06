@@ -11,6 +11,7 @@ public sealed class McpRequestDispatcher
 {
     private const string Urp = "com.unity.render-pipelines.universal";
     private string? _defaultProjectRoot;
+    private readonly Dictionary<string, JsonObject> _toolSchemas = BuildToolSchemas();
 
     public InitializeResult BuildInitializeResult() => new(
         McpProtocol.Version,
@@ -19,27 +20,10 @@ public sealed class McpRequestDispatcher
 
     public ToolsListResult BuildToolsList()
     {
-        var names = new[]
-        {
-            "project_root.set","project.info","editor.state","project.health_check",
-            "asset.create_folder","asset.exists","asset.refresh","asset.list_modified",
-            "scene.create","scene.open","scene.save","scene.validate_refs",
-            "hierarchy.list","hierarchy.find",
-            "gameobject.create","gameobject.modify",
-            "component.add","component.set",
-            "prefab.create","prefab.open","prefab.save","prefab.instantiate","prefab.validate",
-            "script.create_or_edit","scriptableobject.create_or_edit",
-            "graph.open_or_create","graph.connect","graph.edit","graph.validate",
-            "editor.compile_status","console.read",
-            "screenshot.scene","screenshot.game",
-            "tests.run_editmode","tests.run_all","tests.results",
-            "build_settings_scenes",
-            "playmode.enter","playmode.exit",
-            "ui.create_or_edit","localization.key_add",
-            "change.summary","project.docs_update"
-        };
-
-        var tools = names.Select(n => new ToolDefinition(n, n.Replace('_', ' '), new JsonObject { ["type"] = "object" })).ToList();
+        var tools = _toolSchemas
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new ToolDefinition(kv.Key, kv.Key.Replace('_', ' '), kv.Value))
+            .ToList();
         return new ToolsListResult(tools);
     }
 
@@ -48,6 +32,11 @@ public sealed class McpRequestDispatcher
         if (!root.TryGetProperty("params", out var p) || !p.TryGetProperty("name", out var n)) return Err("Missing params.name");
         var name = n.GetString() ?? string.Empty;
         var a = p.TryGetProperty("arguments", out var args) ? args : default;
+        var validationError = ValidateToolArguments(name, a);
+        if (validationError != null)
+        {
+            return Err($"validation error: {validationError}");
+        }
 
         return name switch
         {
@@ -99,6 +88,102 @@ public sealed class McpRequestDispatcher
             _ => Err($"Unknown tool: {name}")
         };
     }
+
+    private string? ValidateToolArguments(string toolName, JsonElement args)
+    {
+        if (!_toolSchemas.TryGetValue(toolName, out var schema))
+        {
+            return null;
+        }
+
+        if (args.ValueKind != JsonValueKind.Undefined && args.ValueKind != JsonValueKind.Object)
+        {
+            return "arguments must be an object";
+        }
+
+        var properties = schema["properties"] as JsonObject ?? new JsonObject();
+        var allowed = new HashSet<string>(properties.Select(p => p.Key), StringComparer.Ordinal);
+        var additionalAllowed = schema["additionalProperties"]?.GetValue<bool?>() ?? true;
+
+        if (args.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in args.EnumerateObject())
+            {
+                if (!additionalAllowed && !allowed.Contains(prop.Name))
+                {
+                    return $"unknown property '{prop.Name}'";
+                }
+
+                if (!properties.TryGetPropertyValue(prop.Name, out var propertySchemaNode) || propertySchemaNode is not JsonObject propertySchema)
+                {
+                    continue;
+                }
+
+                var typeName = propertySchema["type"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(typeName) && !MatchesType(prop.Value, typeName!))
+                {
+                    return $"property '{prop.Name}' must be of type {typeName}";
+                }
+
+                if (propertySchema["enum"] is JsonArray en && en.Count > 0 && prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    var value = prop.Value.GetString() ?? string.Empty;
+                    var ok = en.OfType<JsonValue>().Select(x => x.GetValue<string>()).Any(x => string.Equals(x, value, StringComparison.Ordinal));
+                    if (!ok)
+                    {
+                        return $"property '{prop.Name}' has unsupported value '{value}'";
+                    }
+                }
+            }
+        }
+
+        if (schema["required"] is JsonArray req)
+        {
+            foreach (var node in req.OfType<JsonValue>())
+            {
+                var key = node.GetValue<string>();
+                if (!HasArg(args, key))
+                {
+                    return $"missing required property '{key}'";
+                }
+            }
+        }
+
+        // one-of style constraints for tools with aliases
+        if (toolName == "asset.create_folder" && !HasAnyArg(args, "path", "folderPath"))
+        {
+            return "requires one of: path | folderPath";
+        }
+        if (toolName == "script.create_or_edit" && !HasAnyArg(args, "scriptName", "path"))
+        {
+            return "requires one of: scriptName | path";
+        }
+        if (toolName == "prefab.create" && !HasAnyArg(args, "sourceObjectPath", "sourcePath", "sourceObjectName"))
+        {
+            return "requires one of: sourceObjectPath | sourcePath | sourceObjectName";
+        }
+        if (toolName == "graph.connect" && !HasAnyArg(args, "fromNodeId", "sourceNodeId", "from", "source"))
+        {
+            return "requires one of: fromNodeId | sourceNodeId | from | source";
+        }
+        if (toolName == "graph.connect" && !HasAnyArg(args, "toNodeId", "targetNodeId", "to", "target"))
+        {
+            return "requires one of: toNodeId | targetNodeId | to | target";
+        }
+
+        return null;
+    }
+
+    private static bool MatchesType(JsonElement value, string expectedType) => expectedType switch
+    {
+        "string" => value.ValueKind == JsonValueKind.String,
+        "integer" => value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out _),
+        "number" => value.ValueKind == JsonValueKind.Number,
+        "boolean" => value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False,
+        "array" => value.ValueKind == JsonValueKind.Array,
+        "object" => value.ValueKind == JsonValueKind.Object,
+        _ => true
+    };
 
     private ToolCallResult ProjectInfo(JsonElement a)
     {
@@ -543,6 +628,16 @@ public sealed class McpRequestDispatcher
         foreach (var it in v.EnumerateArray()) if (it.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(it.GetString())) r.Add(it.GetString()!.Trim());
         return r;
     }
+    private static bool HasArg(JsonElement a, string key)
+    {
+        if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(key, out var v))
+        {
+            return false;
+        }
+        return v.ValueKind != JsonValueKind.Null && v.ValueKind != JsonValueKind.Undefined &&
+               !(v.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(v.GetString()));
+    }
+    private static bool HasAnyArg(JsonElement a, params string[] keys) => keys.Any(k => HasArg(a, k));
     private static string BridgeRoot(string root) => Path.Combine(root, "Library", "XLabMcpBridge");
     private static string? InRoot(string root, string p)
     {
@@ -568,6 +663,83 @@ public sealed class McpRequestDispatcher
 
     private static ToolCallResult Ok(string m) => new(new List<TextContent> { new("text", m) });
     private static ToolCallResult Err(string m) => new(new List<TextContent> { new("text", m) }, IsError: true);
+
+    private static Dictionary<string, JsonObject> BuildToolSchemas()
+    {
+        JsonObject Obj(params (string key, JsonNode schema)[] props)
+        {
+            var p = new JsonObject();
+            foreach (var (key, schema) in props) p[key] = schema;
+            return p;
+        }
+        JsonObject S(string type, params string[] en)
+        {
+            var o = new JsonObject { ["type"] = type };
+            if (en.Length > 0) o["enum"] = new JsonArray(en.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
+            return o;
+        }
+        JsonObject Schema(JsonObject props, bool additional = false, params string[] required)
+        {
+            var o = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = props,
+                ["additionalProperties"] = additional
+            };
+            if (required.Length > 0)
+            {
+                o["required"] = new JsonArray(required.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
+            }
+            return o;
+        }
+
+        return new Dictionary<string, JsonObject>(StringComparer.Ordinal)
+        {
+            ["project_root.set"] = Schema(Obj(("projectRoot", S("string"))), required: new[] { "projectRoot" }),
+            ["project.info"] = Schema(Obj(("projectRoot", S("string"))), additional: true),
+            ["editor.state"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["project.health_check"] = Schema(Obj(("projectRoot", S("string"))), additional: true),
+            ["asset.create_folder"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("folderPath", S("string"))), additional: true),
+            ["asset.exists"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string"))), additional: true, required: new[] { "path" }),
+            ["asset.refresh"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["asset.list_modified"] = Schema(Obj(("projectRoot", S("string")), ("hours", S("integer")), ("waitMs", S("integer"))), additional: true),
+            ["scene.create"] = Schema(Obj(("projectRoot", S("string")), ("sceneName", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["scene.open"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "scenePath" }),
+            ["scene.save"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["scene.validate_refs"] = Schema(Obj(("projectRoot", S("string")), ("scenePath", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["hierarchy.list"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["hierarchy.find"] = Schema(Obj(("projectRoot", S("string")), ("query", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "query" }),
+            ["gameobject.create"] = Schema(Obj(("projectRoot", S("string")), ("name", S("string")), ("parentPath", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["gameobject.modify"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("operation", S("string", "rename", "set_active")), ("newName", S("string")), ("active", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath", "operation" }),
+            ["component.add"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("componentType", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath", "componentType" }),
+            ["component.set"] = Schema(Obj(("projectRoot", S("string")), ("targetPath", S("string")), ("active", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "targetPath" }),
+            ["prefab.create"] = Schema(Obj(("projectRoot", S("string")), ("sourceObjectPath", S("string")), ("sourcePath", S("string")), ("sourceObjectName", S("string")), ("prefabPath", S("string")), ("createIfMissing", S("boolean")), ("strictSourceRequired", S("boolean")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
+            ["prefab.open"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
+            ["prefab.save"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["prefab.instantiate"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "prefabPath" }),
+            ["prefab.validate"] = Schema(Obj(("projectRoot", S("string")), ("prefabPath", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["script.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("scriptName", S("string")), ("path", S("string")), ("mode", S("string", "create", "append", "replace", "overwrite")), ("text", S("string")), ("oldText", S("string"))), additional: true),
+            ["scriptableobject.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("name", S("string")), ("scriptName", S("string")), ("folder", S("string")), ("namespace", S("string")), ("mode", S("string", "create", "append", "overwrite")), ("contents", S("string")), ("text", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["graph.open_or_create"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("graph_name", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["graph.connect"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("fromNodeId", S("string")), ("sourceNodeId", S("string")), ("toNodeId", S("string")), ("targetNodeId", S("string")), ("fromPort", S("string")), ("toPort", S("string")), ("kind", S("string", "control", "value")), ("from", S("string")), ("to", S("string")), ("source", S("string")), ("target", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["graph.edit"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("operation", S("string", "add_node", "remove_node", "set_node")), ("nodeId", S("string")), ("unitType", S("string")), ("x", S("number")), ("y", S("number")), ("waitMs", S("integer"))), additional: true),
+            ["graph.validate"] = Schema(Obj(("projectRoot", S("string")), ("graphPath", S("string")), ("graphName", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["editor.compile_status"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["console.read"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["screenshot.scene"] = Schema(Obj(("projectRoot", S("string")), ("outputPath", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["screenshot.game"] = Schema(Obj(("projectRoot", S("string")), ("outputPath", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["tests.run_editmode"] = Schema(Obj(("projectRoot", S("string")), ("mode", S("string", "EditMode", "All")), ("waitMs", S("integer"))), additional: true),
+            ["tests.run_all"] = Schema(Obj(("projectRoot", S("string")), ("mode", S("string", "All")), ("waitMs", S("integer"))), additional: true),
+            ["tests.results"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["build_settings_scenes"] = Schema(Obj(("projectRoot", S("string")), ("action", S("string", "get", "set")), ("scenes", S("array")), ("waitMs", S("integer"))), additional: true),
+            ["playmode.enter"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["playmode.exit"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["ui.create_or_edit"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("name", S("string")), ("mode", S("string", "create", "append", "overwrite")), ("contents", S("string")), ("text", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["localization.key_add"] = Schema(Obj(("projectRoot", S("string")), ("key", S("string")), ("value", S("string")), ("defaultValue", S("string")), ("path", S("string")), ("waitMs", S("integer"))), additional: true, required: new[] { "key" }),
+            ["change.summary"] = Schema(Obj(("projectRoot", S("string")), ("waitMs", S("integer"))), additional: true),
+            ["project.docs_update"] = Schema(Obj(("projectRoot", S("string")), ("path", S("string")), ("docPath", S("string")), ("line", S("string")), ("text", S("string")), ("contents", S("string")), ("mode", S("string", "append", "overwrite")), ("waitMs", S("integer"))), additional: true),
+        };
+    }
 }
 
 public sealed class McpServer

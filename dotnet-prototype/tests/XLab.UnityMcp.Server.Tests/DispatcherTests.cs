@@ -296,12 +296,34 @@ public sealed class DispatcherTests
 
         try
         {
+            var extra = toolName switch
+            {
+                "scene.open" => "\"scenePath\": \"Assets/Scenes/Main.unity\",",
+                "hierarchy.find" => "\"query\": \"Operative\",",
+                "gameobject.modify" => "\"targetPath\": \"Root/Obj\", \"operation\": \"rename\",",
+                "component.add" => "\"targetPath\": \"Root/Obj\", \"componentType\": \"BoxCollider\",",
+                "component.set" => "\"targetPath\": \"Root/Obj\",",
+                "prefab.create" => "\"sourceObjectPath\": \"Operative_Player_A_Source\", \"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
+                "prefab.open" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
+                "prefab.instantiate" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
+                "scene.validate_refs" => "\"scenePath\": \"Assets/Scenes/Main.unity\",",
+                "prefab.validate" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
+                "scriptableobject.create_or_edit" => "\"name\": \"MissionConfig\",",
+                "ui.create_or_edit" => "\"name\": \"MissionHud\",",
+                "localization.key_add" => "\"key\": \"ui.mission.start\",",
+                "graph.connect" => "\"fromNodeId\": \"n1\", \"toNodeId\": \"n2\",",
+                "graph.edit" => "\"operation\": \"add_node\", \"nodeId\": \"n1\", \"unitType\": \"DebugLog\",",
+                "build_settings_scenes" => "\"action\": \"get\",",
+                _ => ""
+            };
+
             var json = $$"""
             {
               "params": {
                 "name": "{{toolName}}",
                 "arguments": {
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  {{extra}}
                   "waitMs": 0
                 }
               }
@@ -315,6 +337,39 @@ public sealed class DispatcherTests
             Assert.False(result.IsError);
             Assert.True(Directory.Exists(cmdDir));
             Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ValidationError_ForMissingRequiredProperty()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = $$"""
+            {
+              "params": {
+                "name": "localization.key_add",
+                "arguments": {
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """;
+            using var doc = JsonDocument.Parse(json);
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+            Assert.True(result.IsError);
+            Assert.Contains("validation error", result.Content[0].Text);
+            Assert.Contains("key", result.Content[0].Text);
         }
         finally
         {
