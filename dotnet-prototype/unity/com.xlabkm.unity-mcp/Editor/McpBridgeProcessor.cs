@@ -398,23 +398,15 @@ namespace XLab.UnityMcp.Editor
             return (false, "graph path must be under Assets/VisualScripting/");
         }
 
-        var graphType = FindType("Unity.VisualScripting.ScriptGraphAsset");
-        if (graphType == null)
+        var load = EnsureGraphLoaded(graphPath, createIfMissing: true);
+        if (!load.Success)
         {
-            return (false, "Unity Visual Scripting package/type not found.");
+            return (false, load.Message);
         }
 
-        var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(graphPath);
-        if (existing != null)
-        {
-            return (true, $"Graph opened: {graphPath}");
-        }
-
-        var instance = ScriptableObject.CreateInstance(graphType);
-        AssetDatabase.CreateAsset(instance, graphPath);
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-        return (true, $"Graph created: {graphPath}");
+        var state = LoadGraphState(graphPath);
+        SaveGraphState(graphPath, state);
+        return (true, $"Graph ready: {graphPath}");
     }
 
     private static (bool, string) GraphConnect(string raw)
@@ -422,16 +414,69 @@ namespace XLab.UnityMcp.Editor
         var args = ParseGraphArgs(raw);
         var explicitPath = FirstNonEmpty(JsonArgumentString(raw, "graphPath"), JsonArgumentString(raw, "graph_path"), JsonArgumentString(raw, "path"));
         var graphPath = !string.IsNullOrWhiteSpace(explicitPath) ? explicitPath.Replace("\\", "/") : ResolveGraphPath(args);
-        var load = LoadGraph(graphPath);
+        var load = EnsureGraphLoaded(graphPath, createIfMissing: true);
         if (!load.Success)
         {
             return (false, load.Message);
         }
 
-        var from = FirstNonEmpty(args.from, args.source, args.fromNode, args.sourceNode) ?? "From";
-        var to = FirstNonEmpty(args.to, args.target, args.toNode, args.targetNode) ?? "To";
-        AppendGraphLabel(load.Asset!, $"mcp-edge:{from}->{to}");
-        return (true, $"graph.connect: {from}->{to} in {graphPath}");
+        var sourceNodeId = FirstNonEmpty(
+            JsonArgumentString(raw, "fromNodeId"),
+            JsonArgumentString(raw, "sourceNodeId"),
+            args.from, args.source, args.fromNode, args.sourceNode);
+        var targetNodeId = FirstNonEmpty(
+            JsonArgumentString(raw, "toNodeId"),
+            JsonArgumentString(raw, "targetNodeId"),
+            args.to, args.target, args.toNode, args.targetNode);
+        if (string.IsNullOrWhiteSpace(sourceNodeId) || string.IsNullOrWhiteSpace(targetNodeId))
+        {
+            return (false, "graph.connect requires fromNodeId/sourceNodeId and toNodeId/targetNodeId");
+        }
+
+        var sourcePort = FirstNonEmpty(JsonArgumentString(raw, "fromPort"), JsonArgumentString(raw, "sourcePort"), JsonArgumentString(raw, "outPort")) ?? "exit";
+        var targetPort = FirstNonEmpty(JsonArgumentString(raw, "toPort"), JsonArgumentString(raw, "targetPort"), JsonArgumentString(raw, "inPort")) ?? "enter";
+        var kind = (FirstNonEmpty(JsonArgumentString(raw, "kind"), JsonArgumentString(raw, "connectionKind")) ?? "control").ToLowerInvariant();
+
+        var state = LoadGraphState(graphPath);
+        var srcNode = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, sourceNodeId, StringComparison.Ordinal));
+        var dstNode = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, targetNodeId, StringComparison.Ordinal));
+        if (srcNode == null || dstNode == null)
+        {
+            return (false, $"graph.connect nodes not found in graph state: from={sourceNodeId}; to={targetNodeId}");
+        }
+
+        var sourceUnit = FindUnitByGuid(load.Graph!, srcNode.guid);
+        var targetUnit = FindUnitByGuid(load.Graph!, dstNode.guid);
+        if (sourceUnit == null || targetUnit == null)
+        {
+            return (false, $"graph.connect unit not found in graph asset: from={sourceNodeId}; to={targetNodeId}");
+        }
+
+        var connect = ConnectGraphPorts(load.Graph!, sourceUnit, sourcePort, targetUnit, targetPort, kind);
+        if (!connect.Success)
+        {
+            return (false, connect.Message);
+        }
+
+        state.links.RemoveAll(l =>
+            string.Equals(l.fromNodeId, sourceNodeId, StringComparison.Ordinal) &&
+            string.Equals(l.toNodeId, targetNodeId, StringComparison.Ordinal) &&
+            string.Equals(l.fromPort, sourcePort, StringComparison.Ordinal) &&
+            string.Equals(l.toPort, targetPort, StringComparison.Ordinal) &&
+            string.Equals(l.kind, kind, StringComparison.Ordinal));
+        state.links.Add(new GraphLinkState
+        {
+            fromNodeId = sourceNodeId!,
+            fromPort = sourcePort,
+            toNodeId = targetNodeId!,
+            toPort = targetPort,
+            kind = kind
+        });
+
+        EditorUtility.SetDirty(load.Asset!);
+        AssetDatabase.SaveAssets();
+        SaveGraphState(graphPath, state);
+        return (true, $"graph.connect: {sourceNodeId}.{sourcePort} -> {targetNodeId}.{targetPort}; kind={kind}; path={graphPath}");
     }
 
     private static (bool, string) GraphEdit(string raw)
@@ -439,16 +484,114 @@ namespace XLab.UnityMcp.Editor
         var args = ParseGraphArgs(raw);
         var explicitPath = FirstNonEmpty(JsonArgumentString(raw, "graphPath"), JsonArgumentString(raw, "graph_path"), JsonArgumentString(raw, "path"));
         var graphPath = !string.IsNullOrWhiteSpace(explicitPath) ? explicitPath.Replace("\\", "/") : ResolveGraphPath(args);
-        var load = LoadGraph(graphPath);
+        var load = EnsureGraphLoaded(graphPath, createIfMissing: true);
         if (!load.Success)
         {
             return (false, load.Message);
         }
 
-        var note = FirstNonEmpty(args.patch, args.text, args.edit) ?? "graph.edit";
-        var hash = Math.Abs(note.GetHashCode()).ToString("X8");
-        AppendGraphLabel(load.Asset!, $"mcp-edit:{hash}");
-        return (true, $"graph.edit applied: {graphPath}");
+        var op = (FirstNonEmpty(
+            JsonArgumentString(raw, "operation"),
+            JsonArgumentString(raw, "op"),
+            JsonArgumentString(raw, "action")) ?? "add_node").ToLowerInvariant();
+        var state = LoadGraphState(graphPath);
+
+        if (op == "add_node")
+        {
+            var nodeId = FirstNonEmpty(JsonArgumentString(raw, "nodeId"), JsonArgumentString(raw, "id"), JsonArgumentString(raw, "name"));
+            var unitType = FirstNonEmpty(JsonArgumentString(raw, "unitType"), JsonArgumentString(raw, "nodeType"), JsonArgumentString(raw, "type"));
+            if (string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(unitType))
+            {
+                return (false, "graph.edit add_node requires nodeId and unitType");
+            }
+
+            var nodeX = JsonArgumentFloat(raw, "x") ?? 0f;
+            var nodeY = JsonArgumentFloat(raw, "y") ?? 0f;
+            if (state.nodes.Any(n => string.Equals(n.nodeId, nodeId, StringComparison.Ordinal)))
+            {
+                return (false, $"node already exists: {nodeId}");
+            }
+
+            var add = AddGraphNode(load.Graph!, unitType!, nodeX, nodeY);
+            if (!add.Success)
+            {
+                return (false, add.Message);
+            }
+
+            state.nodes.Add(new GraphNodeState
+            {
+                nodeId = nodeId!,
+                guid = add.UnitGuid ?? Guid.NewGuid().ToString("N"),
+                unitType = add.UnitType ?? unitType!,
+                x = nodeX,
+                y = nodeY
+            });
+            EditorUtility.SetDirty(load.Asset!);
+            AssetDatabase.SaveAssets();
+            SaveGraphState(graphPath, state);
+            return (true, $"graph.edit add_node: nodeId={nodeId}; unitType={unitType}; path={graphPath}");
+        }
+
+        if (op == "remove_node")
+        {
+            var nodeId = FirstNonEmpty(JsonArgumentString(raw, "nodeId"), JsonArgumentString(raw, "id"), JsonArgumentString(raw, "name"));
+            if (string.IsNullOrWhiteSpace(nodeId))
+            {
+                return (false, "graph.edit remove_node requires nodeId");
+            }
+
+            var node = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, nodeId, StringComparison.Ordinal));
+            if (node == null)
+            {
+                return (false, $"node not found: {nodeId}");
+            }
+
+            var unit = FindUnitByGuid(load.Graph!, node.guid);
+            if (unit != null)
+            {
+                RemoveGraphUnit(load.Graph!, unit);
+            }
+
+            state.nodes.RemoveAll(n => string.Equals(n.nodeId, nodeId, StringComparison.Ordinal));
+            state.links.RemoveAll(l => string.Equals(l.fromNodeId, nodeId, StringComparison.Ordinal) || string.Equals(l.toNodeId, nodeId, StringComparison.Ordinal));
+            EditorUtility.SetDirty(load.Asset!);
+            AssetDatabase.SaveAssets();
+            SaveGraphState(graphPath, state);
+            return (true, $"graph.edit remove_node: nodeId={nodeId}; path={graphPath}");
+        }
+
+        if (op == "set_node")
+        {
+            var nodeId = FirstNonEmpty(JsonArgumentString(raw, "nodeId"), JsonArgumentString(raw, "id"), JsonArgumentString(raw, "name"));
+            if (string.IsNullOrWhiteSpace(nodeId))
+            {
+                return (false, "graph.edit set_node requires nodeId");
+            }
+
+            var node = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, nodeId, StringComparison.Ordinal));
+            if (node == null)
+            {
+                return (false, $"node not found: {nodeId}");
+            }
+
+            var x = JsonArgumentFloat(raw, "x") ?? node.x;
+            var y = JsonArgumentFloat(raw, "y") ?? node.y;
+            var unit = FindUnitByGuid(load.Graph!, node.guid);
+            if (unit == null)
+            {
+                return (false, $"unit not found in asset for node: {nodeId}");
+            }
+
+            SetUnitPosition(unit, x, y);
+            node.x = x;
+            node.y = y;
+            EditorUtility.SetDirty(load.Asset!);
+            AssetDatabase.SaveAssets();
+            SaveGraphState(graphPath, state);
+            return (true, $"graph.edit set_node: nodeId={nodeId}; x={x}; y={y}; path={graphPath}");
+        }
+
+        return (false, $"Unsupported graph.edit operation: {op}. Supported: add_node|remove_node|set_node");
     }
 
     private static (bool, string) GraphValidate(string raw)
@@ -456,17 +599,20 @@ namespace XLab.UnityMcp.Editor
         var args = ParseGraphArgs(raw);
         var explicitPath = FirstNonEmpty(JsonArgumentString(raw, "graphPath"), JsonArgumentString(raw, "graph_path"), JsonArgumentString(raw, "path"));
         var graphPath = !string.IsNullOrWhiteSpace(explicitPath) ? explicitPath.Replace("\\", "/") : ResolveGraphPath(args);
-        var load = LoadGraph(graphPath);
+        var load = EnsureGraphLoaded(graphPath, createIfMissing: false);
         if (!load.Success)
         {
             // Bridge-only callers may validate before graph is created. Keep this non-fatal.
             return (true, $"graph.validate: exists=false; path={graphPath}; reason={load.Message}");
         }
 
-        var labels = AssetDatabase.GetLabels(load.Asset!);
-        var edges = labels.Count(l => l.StartsWith("mcp-edge:", StringComparison.Ordinal));
-        var edits = labels.Count(l => l.StartsWith("mcp-edit:", StringComparison.Ordinal));
-        return (true, $"graph.validate: assetType={load.Asset!.GetType().FullName}; edges={edges}; edits={edits}; path={graphPath}");
+        var state = LoadGraphState(graphPath);
+        var unitCount = CountCollectionItems(GetMemberValue(load.Graph!, "units"));
+        var controlCount = CountCollectionItems(GetMemberValue(load.Graph!, "controlConnections"));
+        var valueCount = CountCollectionItems(GetMemberValue(load.Graph!, "valueConnections"));
+        var stateLinks = state.links.Count;
+        var stateNodes = state.nodes.Count;
+        return (true, $"graph.validate: exists=true; assetType={load.Asset!.GetType().FullName}; units={unitCount}; controlConnections={controlCount}; valueConnections={valueCount}; stateNodes={stateNodes}; stateLinks={stateLinks}; path={graphPath}");
     }
 
     private static (bool, string) UiCreateOrEdit(string raw)
@@ -870,6 +1016,20 @@ namespace XLab.UnityMcp.Editor
         return string.Equals(m.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static float? JsonArgumentFloat(string json, string key)
+    {
+        var args = ExtractJsonObjectValue(json, "arguments");
+        var source = string.IsNullOrWhiteSpace(args) ? json : args + "\n" + json;
+        var m = Regex.Match(source, $"\"{Regex.Escape(key)}\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)", RegexOptions.IgnoreCase);
+        if (!m.Success)
+        {
+            return null;
+        }
+        return float.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
     private static List<string> JsonStringArray(string json, string key)
     {
         var result = new List<string>();
@@ -1033,43 +1193,531 @@ namespace XLab.UnityMcp.Editor
         return null;
     }
 
-    private static (bool Success, string Message, UnityEngine.Object? Asset) LoadGraph(string graphPath)
+    private static GraphLoadResult EnsureGraphLoaded(string graphPath, bool createIfMissing)
     {
         if (!graphPath.StartsWith("Assets/VisualScripting/", StringComparison.Ordinal))
         {
-            return (false, "graph path must be under Assets/VisualScripting/", null);
-        }
-
-        var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(graphPath);
-        if (asset == null)
-        {
-            return (false, $"graph not found: {graphPath}", null);
+            return GraphLoadResult.Fail("graph path must be under Assets/VisualScripting/");
         }
 
         var graphType = FindType("Unity.VisualScripting.ScriptGraphAsset");
         if (graphType == null)
         {
-            return (false, "Unity Visual Scripting package/type not found.", null);
+            return GraphLoadResult.Fail("Unity Visual Scripting package/type not found.");
+        }
+
+        var flowGraphType = FindType("Unity.VisualScripting.FlowGraph");
+        if (flowGraphType == null)
+        {
+            return GraphLoadResult.Fail("Unity Visual Scripting FlowGraph type not found.");
+        }
+
+        var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(graphPath);
+        if (asset == null)
+        {
+            if (!createIfMissing)
+            {
+                return GraphLoadResult.Fail($"graph not found: {graphPath}");
+            }
+
+            var dir = Path.GetDirectoryName(graphPath)?.Replace("\\", "/");
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                Directory.CreateDirectory(Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), dir));
+            }
+
+            var created = ScriptableObject.CreateInstance(graphType);
+            var newGraph = Activator.CreateInstance(flowGraphType);
+            if (newGraph == null)
+            {
+                return GraphLoadResult.Fail("Failed to create FlowGraph instance.");
+            }
+            if (!TrySetMemberValue(created, "graph", newGraph))
+            {
+                return GraphLoadResult.Fail("Failed to assign FlowGraph to ScriptGraphAsset.");
+            }
+
+            AssetDatabase.CreateAsset(created, graphPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            asset = created;
         }
 
         if (!graphType.IsAssignableFrom(asset.GetType()))
         {
-            return (false, $"asset is not ScriptGraphAsset: {graphPath}", null);
+            return GraphLoadResult.Fail($"asset is not ScriptGraphAsset: {graphPath}");
         }
 
-        return (true, "ok", asset);
-    }
-
-    private static void AppendGraphLabel(UnityEngine.Object asset, string value)
-    {
-        var labels = AssetDatabase.GetLabels(asset).ToList();
-        if (!labels.Contains(value))
+        var graphObj = GetMemberValue(asset, "graph");
+        if (graphObj == null)
         {
-            labels.Add(value);
-            AssetDatabase.SetLabels(asset, labels.ToArray());
+            var newGraph = Activator.CreateInstance(flowGraphType);
+            if (newGraph == null)
+            {
+                return GraphLoadResult.Fail("Failed to create FlowGraph instance.");
+            }
+            if (!TrySetMemberValue(asset, "graph", newGraph))
+            {
+                return GraphLoadResult.Fail("Failed to assign FlowGraph to ScriptGraphAsset.");
+            }
+            graphObj = newGraph;
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
         }
+
+        return GraphLoadResult.Ok(asset, graphObj);
+    }
+
+    private static GraphState LoadGraphState(string graphPath)
+    {
+        var statePath = GraphStatePath(graphPath);
+        if (!File.Exists(statePath))
+        {
+            return new GraphState();
+        }
+
+        try
+        {
+            var state = JsonUtility.FromJson<GraphState>(File.ReadAllText(statePath));
+            return state ?? new GraphState();
+        }
+        catch
+        {
+            return new GraphState();
+        }
+    }
+
+    private static void SaveGraphState(string graphPath, GraphState state)
+    {
+        var statePath = GraphStatePath(graphPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+        File.WriteAllText(statePath, JsonUtility.ToJson(state, true), Encoding.UTF8);
+    }
+
+    private static string GraphStatePath(string graphPath)
+    {
+        var safe = Regex.Replace(graphPath, @"[^A-Za-z0-9_.-]", "_");
+        return Path.Combine(BridgeRoot(), "graph-state", $"{safe}.json");
+    }
+
+    private static (bool Success, string? Message, string? UnitGuid, string? UnitType) AddGraphNode(object graphObj, string requestedType, float x, float y)
+    {
+        var unitType = ResolveUnitType(requestedType);
+        if (unitType == null)
+        {
+            return (false, $"Unit type not found: {requestedType}", null, null);
+        }
+
+        var unit = Activator.CreateInstance(unitType);
+        if (unit == null)
+        {
+            return (false, $"Failed to instantiate unit type: {unitType.FullName}", null, null);
+        }
+
+        TryInvokeNoArg(unit, "Definition");
+        TryInvokeNoArg(unit, "Define");
+        SetUnitPosition(unit, x, y);
+
+        var unitsCollection = GetMemberValue(graphObj, "units");
+        if (unitsCollection == null || !TryInvokeCollectionAdd(unitsCollection, unit))
+        {
+            if (!TryInvokeMethod(graphObj, "AddUnit", unit))
+            {
+                return (false, "Failed to add unit to FlowGraph.units", null, null);
+            }
+        }
+
+        var guid = ReadGuidString(unit) ?? Guid.NewGuid().ToString("N");
+        return (true, null, guid, unitType.FullName ?? unitType.Name);
+    }
+
+    private static void RemoveGraphUnit(object graphObj, object unit)
+    {
+        var unitsCollection = GetMemberValue(graphObj, "units");
+        if (unitsCollection != null && TryInvokeCollectionRemove(unitsCollection, unit))
+        {
+            return;
+        }
+
+        TryInvokeMethod(graphObj, "RemoveUnit", unit);
+    }
+
+    private static object? FindUnitByGuid(object graphObj, string guid)
+    {
+        var unitsCollection = GetMemberValue(graphObj, "units");
+        if (unitsCollection == null)
+        {
+            return null;
+        }
+
+        foreach (var unit in EnumerateCollection(unitsCollection))
+        {
+            var id = ReadGuidString(unit);
+            if (!string.IsNullOrWhiteSpace(id) && string.Equals(id, guid, StringComparison.OrdinalIgnoreCase))
+            {
+                return unit;
+            }
+        }
+        return null;
+    }
+
+    private static (bool Success, string Message) ConnectGraphPorts(object graphObj, object sourceUnit, string sourcePortName, object targetUnit, string targetPortName, string kind)
+    {
+        if (kind == "value")
+        {
+            var sourcePort = FindNamedPort(sourceUnit, sourcePortName, "valueOutputs");
+            var targetPort = FindNamedPort(targetUnit, targetPortName, "valueInputs");
+            if (sourcePort == null || targetPort == null)
+            {
+                return (false, $"value ports not found: {sourcePortName}->{targetPortName}");
+            }
+
+            var collection = GetMemberValue(graphObj, "valueConnections");
+            if (collection == null)
+            {
+                return (false, "FlowGraph.valueConnections not found");
+            }
+
+            if (TryInvokeMethod(collection, "Add", sourcePort, targetPort))
+            {
+                return (true, "ok");
+            }
+
+            var valueConnectionType = FindType("Unity.VisualScripting.ValueConnection");
+            if (valueConnectionType != null)
+            {
+                var conn = TryCreateConnection(valueConnectionType, sourcePort, targetPort);
+                if (conn != null && TryInvokeMethod(collection, "Add", conn))
+                {
+                    return (true, "ok");
+                }
+            }
+
+            return (false, "Failed to add value connection");
+        }
+        else
+        {
+            var sourcePort = FindNamedPort(sourceUnit, sourcePortName, "controlOutputs");
+            var targetPort = FindNamedPort(targetUnit, targetPortName, "controlInputs");
+            if (sourcePort == null || targetPort == null)
+            {
+                return (false, $"control ports not found: {sourcePortName}->{targetPortName}");
+            }
+
+            var collection = GetMemberValue(graphObj, "controlConnections");
+            if (collection == null)
+            {
+                return (false, "FlowGraph.controlConnections not found");
+            }
+
+            if (TryInvokeMethod(collection, "Add", sourcePort, targetPort))
+            {
+                return (true, "ok");
+            }
+
+            var controlConnectionType = FindType("Unity.VisualScripting.ControlConnection");
+            if (controlConnectionType != null)
+            {
+                var conn = TryCreateConnection(controlConnectionType, sourcePort, targetPort);
+                if (conn != null && TryInvokeMethod(collection, "Add", conn))
+                {
+                    return (true, "ok");
+                }
+            }
+
+            return (false, "Failed to add control connection");
+        }
+    }
+
+    private static object? TryCreateConnection(Type connectionType, object sourcePort, object targetPort)
+    {
+        foreach (var ctor in connectionType.GetConstructors())
+        {
+            var ps = ctor.GetParameters();
+            if (ps.Length != 2)
+            {
+                continue;
+            }
+
+            if (ps[0].ParameterType.IsAssignableFrom(sourcePort.GetType()) &&
+                ps[1].ParameterType.IsAssignableFrom(targetPort.GetType()))
+            {
+                return ctor.Invoke(new[] { sourcePort, targetPort });
+            }
+        }
+        return null;
+    }
+
+    private static object? FindNamedPort(object unit, string portName, string portCollectionMember)
+    {
+        var collection = GetMemberValue(unit, portCollectionMember);
+        if (collection == null)
+        {
+            return null;
+        }
+
+        var byIndexer = TryGetCollectionItemByStringKey(collection, portName);
+        if (byIndexer != null)
+        {
+            return byIndexer;
+        }
+
+        foreach (var item in EnumerateCollection(collection))
+        {
+            var key = (GetMemberValue(item, "key") ?? GetMemberValue(item, "Key"))?.ToString();
+            if (!string.IsNullOrWhiteSpace(key) && string.Equals(key, portName, StringComparison.Ordinal))
+            {
+                return item;
+            }
+
+            var itemPortKey = (GetMemberValue(item, "key") ?? GetMemberValue(item, "name"))?.ToString();
+            if (!string.IsNullOrWhiteSpace(itemPortKey) && string.Equals(itemPortKey, portName, StringComparison.Ordinal))
+            {
+                return item;
+            }
+
+            var value = GetMemberValue(item, "Value");
+            if (value != null)
+            {
+                var valueKey = (GetMemberValue(value, "key") ?? GetMemberValue(value, "name"))?.ToString();
+                if (!string.IsNullOrWhiteSpace(valueKey) && string.Equals(valueKey, portName, StringComparison.Ordinal))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static object? TryGetCollectionItemByStringKey(object collection, string key)
+    {
+        var type = collection.GetType();
+        var indexers = type.GetDefaultMembers().OfType<PropertyInfo>().Where(p =>
+        {
+            var ps = p.GetIndexParameters();
+            return ps.Length == 1 && ps[0].ParameterType == typeof(string);
+        });
+
+        foreach (var indexer in indexers)
+        {
+            try
+            {
+                var value = indexer.GetValue(collection, new object[] { key });
+                if (value != null)
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        var getItem = type.GetMethod("get_Item", new[] { typeof(string) });
+        if (getItem != null)
+        {
+            try
+            {
+                return getItem.Invoke(collection, new object[] { key });
+            }
+            catch
+            {
+            }
+        }
+
+        return null;
+    }
+
+    private static int CountCollectionItems(object? collection)
+    {
+        if (collection == null)
+        {
+            return 0;
+        }
+
+        var countMember = GetMemberValue(collection, "Count");
+        if (countMember is int i)
+        {
+            return i;
+        }
+
+        return EnumerateCollection(collection).Count();
+    }
+
+    private static IEnumerable<object> EnumerateCollection(object collection)
+    {
+        if (collection is System.Collections.IEnumerable enumerable)
+        {
+            foreach (var item in enumerable)
+            {
+                if (item != null)
+                {
+                    yield return item;
+                }
+            }
+        }
+    }
+
+    private static Type? ResolveUnitType(string requestedType)
+    {
+        if (string.IsNullOrWhiteSpace(requestedType))
+        {
+            return null;
+        }
+
+        if (requestedType.Contains("."))
+        {
+            return FindType(requestedType);
+        }
+
+        return FindTypeByName(requestedType, "Unity.VisualScripting")
+               ?? FindTypeByName(requestedType);
+    }
+
+    private static string? ReadGuidString(object unit)
+    {
+        var guidVal = GetMemberValue(unit, "guid");
+        if (guidVal == null)
+        {
+            return null;
+        }
+        if (guidVal is Guid g)
+        {
+            return g.ToString("N");
+        }
+        return guidVal.ToString();
+    }
+
+    private static void SetUnitPosition(object unit, float x, float y)
+    {
+        TrySetMemberValue(unit, "position", new Vector2(x, y));
+    }
+
+    private static object? GetMemberValue(object obj, string name)
+    {
+        var type = obj.GetType();
+        var prop = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (prop != null)
+        {
+            try { return prop.GetValue(obj); } catch { }
+        }
+
+        var field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (field != null)
+        {
+            try { return field.GetValue(obj); } catch { }
+        }
+        return null;
+    }
+
+    private static bool TrySetMemberValue(object obj, string name, object value)
+    {
+        var type = obj.GetType();
+        var prop = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (prop != null && prop.CanWrite && prop.PropertyType.IsAssignableFrom(value.GetType()))
+        {
+            try
+            {
+                prop.SetValue(obj, value);
+                return true;
+            }
+            catch
+            {
+            }
+        }
+
+        var field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (field != null && field.FieldType.IsAssignableFrom(value.GetType()))
+        {
+            try
+            {
+                field.SetValue(obj, value);
+                return true;
+            }
+            catch
+            {
+            }
+        }
+        return false;
+    }
+
+    private static bool TryInvokeNoArg(object target, string methodName)
+    {
+        var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+        if (method == null)
+        {
+            return false;
+        }
+        try
+        {
+            method.Invoke(target, Array.Empty<object>());
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryInvokeMethod(object target, string methodName, params object[] args)
+    {
+        var methods = target.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(m => string.Equals(m.Name, methodName, StringComparison.Ordinal));
+
+        foreach (var method in methods)
+        {
+            var ps = method.GetParameters();
+            if (ps.Length != args.Length)
+            {
+                continue;
+            }
+
+            var compatible = true;
+            for (var i = 0; i < ps.Length; i++)
+            {
+                var arg = args[i];
+                if (arg == null)
+                {
+                    if (ps[i].ParameterType.IsValueType)
+                    {
+                        compatible = false;
+                        break;
+                    }
+                    continue;
+                }
+                if (!ps[i].ParameterType.IsAssignableFrom(arg.GetType()))
+                {
+                    compatible = false;
+                    break;
+                }
+            }
+
+            if (!compatible)
+            {
+                continue;
+            }
+
+            try
+            {
+                method.Invoke(target, args);
+                return true;
+            }
+            catch
+            {
+            }
+        }
+        return false;
+    }
+
+    private static bool TryInvokeCollectionAdd(object collection, object value)
+    {
+        return TryInvokeMethod(collection, "Add", value);
+    }
+
+    private static bool TryInvokeCollectionRemove(object collection, object value)
+    {
+        return TryInvokeMethod(collection, "Remove", value);
     }
 
     private static Type? FindType(string fullName)
@@ -1309,6 +1957,52 @@ namespace {ns}
         public string patch = "";
         public string text = "";
         public string edit = "";
+    }
+
+    [Serializable]
+    private sealed class GraphState
+    {
+        public List<GraphNodeState> nodes = new List<GraphNodeState>();
+        public List<GraphLinkState> links = new List<GraphLinkState>();
+    }
+
+    [Serializable]
+    private sealed class GraphNodeState
+    {
+        public string nodeId = "";
+        public string guid = "";
+        public string unitType = "";
+        public float x;
+        public float y;
+    }
+
+    [Serializable]
+    private sealed class GraphLinkState
+    {
+        public string fromNodeId = "";
+        public string fromPort = "";
+        public string toNodeId = "";
+        public string toPort = "";
+        public string kind = "control";
+    }
+
+    private sealed class GraphLoadResult
+    {
+        public bool Success { get; }
+        public string Message { get; }
+        public UnityEngine.Object? Asset { get; }
+        public object? Graph { get; }
+
+        private GraphLoadResult(bool success, string message, UnityEngine.Object? asset, object? graph)
+        {
+            Success = success;
+            Message = message;
+            Asset = asset;
+            Graph = graph;
+        }
+
+        public static GraphLoadResult Ok(UnityEngine.Object asset, object graph) => new GraphLoadResult(true, "ok", asset, graph);
+        public static GraphLoadResult Fail(string message) => new GraphLoadResult(false, message, null, null);
     }
     }
 }
