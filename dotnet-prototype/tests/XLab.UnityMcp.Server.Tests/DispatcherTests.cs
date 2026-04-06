@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using Xunit;
+﻿using System.Text.Json;`r`nusing System.Text.Json.Nodes;`r`nusing Xunit;
 using XLab.UnityMcp.Protocol;
 
 namespace XLab.UnityMcp.Server.Tests;
@@ -418,4 +417,78 @@ public sealed class DispatcherTests
             }
         }
     }
+    [Fact]
+    public void HandleToolCall_BridgeRoundtrip_ReturnsBridgeResponse()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var setDoc = JsonDocument.Parse($"""
+            {
+              "params": {
+                "name": "project_root.set",
+                "arguments": { "projectRoot": "{{root.Replace("\\", "\\\\")}}" }
+              }
+            }
+            """);
+            var setResult = _dispatcher.HandleToolCall(setDoc.RootElement);
+            Assert.False(setResult.IsError);
+
+            using var callDoc = JsonDocument.Parse("""
+            {
+              "params": {
+                "name": "editor.state",
+                "arguments": {
+                  "waitMs": 1200
+                }
+              }
+            }
+            """);
+
+            var bridgeTask = Task.Run(async () =>
+            {
+                var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+                var rspDir = Path.Combine(root, "Library", "XLabMcpBridge", "responses");
+                Directory.CreateDirectory(cmdDir);
+                Directory.CreateDirectory(rspDir);
+
+                string? cmdFile = null;
+                for (var i = 0; i < 30 && cmdFile == null; i++)
+                {
+                    cmdFile = Directory.GetFiles(cmdDir, "*.json").FirstOrDefault();
+                    if (cmdFile == null) await Task.Delay(40);
+                }
+                Assert.NotNull(cmdFile);
+
+                var payload = JsonNode.Parse(File.ReadAllText(cmdFile!)) as JsonObject;
+                Assert.NotNull(payload);
+                var id = payload!["id"]?.GetValue<string>();
+                Assert.False(string.IsNullOrWhiteSpace(id));
+
+                var response = new JsonObject
+                {
+                    ["id"] = id,
+                    ["success"] = true,
+                    ["message"] = "bridge-ok"
+                };
+                var responsePath = Path.Combine(rspDir, Path.GetFileName(cmdFile!));
+                File.WriteAllText(responsePath, response.ToJsonString());
+            });
+
+            var result = _dispatcher.HandleToolCall(callDoc.RootElement);
+            bridgeTask.Wait();
+
+            Assert.False(result.IsError);
+            Assert.Contains("bridge-ok", result.Content[0].Text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
 }
+

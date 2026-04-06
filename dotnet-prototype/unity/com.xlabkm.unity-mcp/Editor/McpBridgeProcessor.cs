@@ -53,7 +53,11 @@ namespace XLab.UnityMcp.Editor
             Directory.CreateDirectory(responses);
             File.WriteAllText(Path.Combine(bridgeRoot, "heartbeat.json"), $"{{\"at\":\"{DateTime.UtcNow:O}\"}}");
 
-            foreach (var cmdFile in Directory.GetFiles(commands, "*.json"))
+            foreach (var cmdFile in Directory.GetFiles(commands, "*.json")
+                         .Select(p => new FileInfo(p))
+                         .OrderBy(f => f.CreationTimeUtc)
+                         .ThenBy(f => f.Name, StringComparer.Ordinal)
+                         .Select(f => f.FullName))
             {
                 ProcessCommand(cmdFile, responses);
             }
@@ -850,6 +854,9 @@ namespace XLab.UnityMcp.Editor
     private static (bool, string) TestsRun(string raw)
     {
         var modeStr = JsonArgumentString(raw, "mode") ?? "All";
+        var testFilter = JsonArgumentString(raw, "filter")
+                         ?? JsonArgumentString(raw, "testFilter")
+                         ?? JsonArgumentString(raw, "testName");
         var apiType = FindType("UnityEditor.TestTools.TestRunner.Api.TestRunnerApi");
         var settingsType = FindType("UnityEditor.TestTools.TestRunner.Api.ExecutionSettings");
         var filterType = FindType("UnityEditor.TestTools.TestRunner.Api.Filter");
@@ -924,6 +931,12 @@ namespace XLab.UnityMcp.Editor
             WriteTestsStatus($"{{\"state\":\"error\",\"reason\":\"testmode-not-settable\",\"at\":\"{DateTime.UtcNow:O}\"}}");
             return (false, "TestRunner filter does not expose settable testMode.");
         }
+        if (!string.IsNullOrWhiteSpace(testFilter))
+        {
+            TrySetFilterStringArray(filter!, "testNames", new[] { testFilter! });
+            TrySetFilterStringArray(filter!, "groupNames", new[] { testFilter! });
+            TrySetFilterStringArray(filter!, "assemblyNames", new[] { testFilter! });
+        }
 
         var filterArray = Array.CreateInstance(filterType, 1);
         filterArray.SetValue(filter, 0);
@@ -957,9 +970,10 @@ namespace XLab.UnityMcp.Editor
             return (false, "TestRunnerApi.Execute not found.");
         }
 
+        TryAttachTestRunnerCallbacks(apiType, api, modeStr);
         execute.Invoke(api, new[] { settings! });
-        WriteTestsStatus($"{{\"state\":\"running\",\"mode\":\"{Escape(modeStr)}\",\"at\":\"{DateTime.UtcNow:O}\"}}");
-        return (true, $"Test run started: mode={modeStr}");
+        WriteTestsStatus($"{{\"state\":\"running\",\"mode\":\"{Escape(modeStr)}\",\"filter\":\"{Escape(testFilter ?? string.Empty)}\",\"at\":\"{DateTime.UtcNow:O}\"}}");
+        return (true, $"Test run started: mode={modeStr}{(string.IsNullOrWhiteSpace(testFilter) ? string.Empty : $"; filter={testFilter}")}");
     }
 
     private static void TryLoadAssemblyByName(string assemblyName)
@@ -1007,6 +1021,168 @@ namespace XLab.UnityMcp.Editor
         return summary != null
             ? (true, summary)
             : (true, "{\"state\":\"unknown\",\"message\":\"no test results yet\"}");
+    }
+
+    private static void TrySetFilterStringArray(object filter, string memberName, string[] values)
+    {
+        var type = filter.GetType();
+        var prop = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (prop != null && prop.CanWrite && prop.PropertyType == typeof(string[]))
+        {
+            try
+            {
+                prop.SetValue(filter, values);
+            }
+            catch
+            {
+            }
+            return;
+        }
+
+        var field = type.GetField(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field != null && field.FieldType == typeof(string[]))
+        {
+            try
+            {
+                field.SetValue(filter, values);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static void TryAttachTestRunnerCallbacks(Type apiType, object api, string mode)
+    {
+        try
+        {
+            var callbacksType = FindType("UnityEditor.TestTools.TestRunner.Api.ICallbacks") ?? FindTypeByName("ICallbacks", "TestRunner.Api");
+            if (callbacksType == null)
+            {
+                return;
+            }
+
+            var register = apiType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(m =>
+                {
+                    if (!string.Equals(m.Name, "RegisterCallbacks", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    var ps = m.GetParameters();
+                    return ps.Length == 1 && ps[0].ParameterType.IsAssignableFrom(callbacksType);
+                });
+            if (register == null)
+            {
+                return;
+            }
+
+            var proxyObject = CreateCallbackProxy(callbacksType, mode);
+            if (proxyObject != null)
+            {
+                register.Invoke(api, new[] { proxyObject });
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static object? CreateCallbackProxy(Type callbacksInterfaceType, string mode)
+    {
+        try
+        {
+            var create = typeof(DispatchProxy).GetMethod("Create", BindingFlags.Public | BindingFlags.Static);
+            if (create == null)
+            {
+                return null;
+            }
+            var generic = create.MakeGenericMethod(callbacksInterfaceType, typeof(TestRunnerCallbacksProxy));
+            var instance = generic.Invoke(null, null);
+            if (instance is TestRunnerCallbacksProxy proxy)
+            {
+                proxy.Mode = mode;
+            }
+            return instance;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void OnTestRunnerCallback(string mode, string callbackName, object?[]? args)
+    {
+        try
+        {
+            if (string.Equals(callbackName, "RunStarted", StringComparison.Ordinal))
+            {
+                WriteTestsStatus($"{{\"state\":\"running\",\"mode\":\"{Escape(mode)}\",\"at\":\"{DateTime.UtcNow:O}\"}}");
+                return;
+            }
+
+            if (string.Equals(callbackName, "RunFinished", StringComparison.Ordinal))
+            {
+                var result = args != null && args.Length > 0 ? args[0] : null;
+                var summary = BuildSummaryFromResultAdapter(result);
+                if (!string.IsNullOrWhiteSpace(summary))
+                {
+                    WriteTestsStatus(summary!);
+                }
+                else
+                {
+                    WriteTestsStatus($"{{\"state\":\"completed\",\"mode\":\"{Escape(mode)}\",\"at\":\"{DateTime.UtcNow:O}\"}}");
+                }
+                return;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static string? BuildSummaryFromResultAdapter(object? resultAdapter)
+    {
+        if (resultAdapter == null)
+        {
+            return null;
+        }
+
+        var type = resultAdapter.GetType();
+        int ReadInt(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var value = GetMemberValue(resultAdapter, name);
+                if (value is int i) return i;
+                if (value is long l) return (int)l;
+                if (value is string s && int.TryParse(s, out var p)) return p;
+            }
+            return 0;
+        }
+
+        double ReadDouble(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var value = GetMemberValue(resultAdapter, name);
+                if (value is double d) return d;
+                if (value is float f) return f;
+                if (value is string s && double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p)) return p;
+            }
+            return 0;
+        }
+
+        var passed = ReadInt("PassCount", "PassedCount", "passed");
+        var failed = ReadInt("FailCount", "FailedCount", "failed");
+        var skipped = ReadInt("SkipCount", "InconclusiveCount", "SkippedCount", "skipped");
+        var total = ReadInt("TestCaseCount", "TotalCount", "total");
+        if (total <= 0)
+        {
+            total = passed + failed + skipped;
+        }
+        var duration = ReadDouble("Duration", "duration", "ElapsedTime");
+        return $"{{\"state\":\"completed\",\"source\":\"callback\",\"total\":{total},\"passed\":{passed},\"failed\":{failed},\"skipped\":{skipped},\"duration\":{duration.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}";
     }
 
     private static string? JsonString(string json, string key)
@@ -2045,6 +2221,20 @@ namespace {ns}
 
         public static GraphLoadResult Ok(UnityEngine.Object asset, object graph) => new GraphLoadResult(true, "ok", asset, graph);
         public static GraphLoadResult Fail(string message) => new GraphLoadResult(false, message, null, null);
+    }
+
+    private sealed class TestRunnerCallbacksProxy : DispatchProxy
+    {
+        public string Mode { get; set; } = "All";
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod != null)
+            {
+                OnTestRunnerCallback(Mode, targetMethod.Name, args);
+            }
+            return null;
+        }
     }
     }
 }
