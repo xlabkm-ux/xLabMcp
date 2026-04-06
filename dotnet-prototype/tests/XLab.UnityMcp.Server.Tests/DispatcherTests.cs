@@ -348,6 +348,45 @@ public sealed class DispatcherTests
     }
 
     [Fact]
+    public void HandleToolCall_BridgeToolWithoutArguments_DoesNotCrash()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var setDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "project_root.set",
+                "arguments": { "projectRoot": "{{root.Replace("\\", "\\\\")}}" }
+              }
+            }
+            """);
+            var setResult = _dispatcher.HandleToolCall(setDoc.RootElement);
+            Assert.False(setResult.IsError);
+
+            using var doc = JsonDocument.Parse("""
+            {
+              "params": {
+                "name": "editor.state"
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+            Assert.False(result.IsError);
+            Assert.Contains("queued:editor.state", result.Content[0].Text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void HandleToolCall_ValidationError_ForMissingRequiredProperty()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));

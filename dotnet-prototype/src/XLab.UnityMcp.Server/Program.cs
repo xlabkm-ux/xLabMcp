@@ -229,7 +229,16 @@ public sealed class McpRequestDispatcher
         var cdir = Path.Combine(b, "commands");
         var rdir = Path.Combine(b, "responses");
         Directory.CreateDirectory(cdir); Directory.CreateDirectory(rdir);
-        var obj = new JsonObject { ["id"] = id, ["command"] = cmd, ["arguments"] = JsonNode.Parse(a.GetRawText()), ["createdAtUtc"] = DateTime.UtcNow.ToString("O") };
+        JsonNode argsNode;
+        if (a.ValueKind == JsonValueKind.Object)
+        {
+            argsNode = JsonNode.Parse(a.GetRawText()) ?? new JsonObject();
+        }
+        else
+        {
+            argsNode = new JsonObject();
+        }
+        var obj = new JsonObject { ["id"] = id, ["command"] = cmd, ["arguments"] = argsNode, ["createdAtUtc"] = DateTime.UtcNow.ToString("O") };
         File.WriteAllText(Path.Combine(cdir, $"{id}.json"), obj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine, Encoding.UTF8);
 
         var waitMs = IntOpt(a, "waitMs") ?? 1200;

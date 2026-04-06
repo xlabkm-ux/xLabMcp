@@ -440,6 +440,24 @@ namespace XLab.UnityMcp.Editor
         var state = LoadGraphState(graphPath);
         var srcNode = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, sourceNodeId, StringComparison.Ordinal));
         var dstNode = state.nodes.FirstOrDefault(n => string.Equals(n.nodeId, targetNodeId, StringComparison.Ordinal));
+        if (srcNode == null && !string.IsNullOrWhiteSpace(sourceNodeId))
+        {
+            var unitByGuid = FindUnitByGuid(load.Graph!, sourceNodeId!);
+            if (unitByGuid != null)
+            {
+                srcNode = new GraphNodeState { nodeId = sourceNodeId!, guid = sourceNodeId!, unitType = unitByGuid.GetType().FullName ?? unitByGuid.GetType().Name };
+                state.nodes.Add(srcNode);
+            }
+        }
+        if (dstNode == null && !string.IsNullOrWhiteSpace(targetNodeId))
+        {
+            var unitByGuid = FindUnitByGuid(load.Graph!, targetNodeId!);
+            if (unitByGuid != null)
+            {
+                dstNode = new GraphNodeState { nodeId = targetNodeId!, guid = targetNodeId!, unitType = unitByGuid.GetType().FullName ?? unitByGuid.GetType().Name };
+                state.nodes.Add(dstNode);
+            }
+        }
         if (srcNode == null || dstNode == null)
         {
             return (false, $"graph.connect nodes not found in graph state: from={sourceNodeId}; to={targetNodeId}");
@@ -1273,7 +1291,22 @@ namespace XLab.UnityMcp.Editor
         var statePath = GraphStatePath(graphPath);
         if (!File.Exists(statePath))
         {
-            return new GraphState();
+            var legacyStatePath = LegacyGraphStatePath(graphPath);
+            if (File.Exists(legacyStatePath))
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+                    File.Copy(legacyStatePath, statePath, overwrite: true);
+                }
+                catch
+                {
+                }
+            }
+            else
+            {
+                return new GraphState();
+            }
         }
 
         try
@@ -1295,6 +1328,15 @@ namespace XLab.UnityMcp.Editor
     }
 
     private static string GraphStatePath(string graphPath)
+    {
+        var normalized = graphPath.Replace("\\", "/");
+        var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var relative = normalized.StartsWith("Assets/", StringComparison.Ordinal) ? normalized : $"Assets/{normalized.TrimStart('/')}";
+        var fullAssetPath = Path.Combine(root, relative.Replace("/", Path.DirectorySeparatorChar.ToString()));
+        return fullAssetPath + ".mcpstate.json";
+    }
+
+    private static string LegacyGraphStatePath(string graphPath)
     {
         var safe = Regex.Replace(graphPath, @"[^A-Za-z0-9_.-]", "_");
         return Path.Combine(BridgeRoot(), "graph-state", $"{safe}.json");
