@@ -17,17 +17,20 @@ Define the minimum MCP `resources` and `tools` required for Codex App to execute
 - Windows readability/input sanity
 - final candidate verification gate
 
-This contract is intentionally aligned to the existing xLabMcp style documented in:
+This contract is intentionally aligned to the target xLabMcp style documented in:
 
 - `README.md`
 - `Docs/README.md`
 - `mcp/README.md`
 - `Docs/canonical_tools.md`
 
+The current runtime and Unity bridge expose a target-only public inventory; see
+`Docs/runtime_tools.md`.
+
 The contract must preserve the xLabMcp naming model:
 
 - use `xlabmcp://...` resources for read-only state
-- use the canonical tool names listed in `Docs/canonical_tools.md`
+- use the target canonical tool names listed in `Docs/canonical_tools.md`
 - only add new actions where the current Unity contract does not yet cover the required verification workflow
 
 ## Contract Principles
@@ -36,7 +39,7 @@ The contract must preserve the xLabMcp naming model:
    Read `xlabmcp://editor/state` and project/scene resources before mutating Editor state.
 
 2. No parallel contract fork.
-   Do not invent a second naming system or legacy alias set when the canonical tools document already defines the approved names.
+   Do not invent a second naming system when the canonical tools document already defines the approved names.
 
 3. Async jobs for long operations.
    Play mode transitions, tests, builds, profiler captures, and save fault-injection flows must return `job_id`.
@@ -72,6 +75,15 @@ Required fields:
 - `open_scenes`
 - `selected_build_target`
 - `quality_level`
+- `bridgeHealth`
+- `bridgeHealth.heartbeatAtUtc`
+- `bridgeHealth.heartbeatAgeMs`
+- `bridgeHealth.queueDepth`
+- `bridgeHealth.oldestCommandAgeMs`
+- `bridgeHealth.lastCommand`
+- `bridgeHealth.auditLogPath`
+- `bridgeHealth.state`
+- `bridgeHealth.recommendedAction`
 - `recommended_retry_after_ms`
 
 
@@ -160,7 +172,7 @@ Required fields:
 
 ### `xlabmcp://localization/tables`
 
-Status: new resource recommended.
+Status: implemented in current runtime.
 
 Required fields:
 
@@ -209,6 +221,31 @@ Return shape:
 - `timestamp`
 - `file`
 - `line`
+
+
+
+### `project.capabilities`
+
+Status: live bridge capability probe.
+
+Purpose:
+
+Return a machine-readable snapshot of what the connected Unity bridge can actually do right now, including readiness flags and supported tool/action combinations.
+
+Required fields:
+
+- `tool`
+- `projectRoot`
+- `projectName`
+- `unityVersion`
+- `bridgePackage.name`
+- `bridgePackage.version`
+- `bridgePackage.buildHash`
+- `bridgeHealth`
+- `readyForTools`
+- `blockingReasons`
+- `readinessFlags`
+- `capabilities[]`
 
 
 
@@ -434,6 +471,19 @@ Required support for verification:
 - `include_image=true`
 - `max_resolution`
 - `view_target`
+- `scenario`
+- `step`
+- `label`
+- `outputPath`
+
+Required response fields:
+
+- `success`
+- `path`
+- `scenario`
+- `step`
+- `label`
+- `indexPath`
 
 
 
@@ -482,15 +532,11 @@ Each failed test must include:
 
 
 
-Note:
-
-`tests.results` is a legacy alias. Do not add it as a new active tool if `get_test_job` can return final structured results.
-
 ## 5. Localization verification
 
 ### `manage_asset(action="list_localization_keys")`
 
-Status: canonical localization key listing action.
+Status: canonical localization key listing action. Implemented in current runtime.
 
 Purpose:
 
@@ -517,7 +563,7 @@ Response:
 
 ### `manage_asset(action="resolve_localization_keys")`
 
-Status: canonical localization key resolution action.
+Status: canonical localization key resolution action. Implemented in current runtime.
 
 Request:
 
@@ -600,7 +646,7 @@ The game runtime should expose an Editor-safe override for save path during MCP 
 
 ### `manage_graphics(action="set_quality_level")`
 
-Status: canonical quality-level switch action.
+Status: canonical quality-level switch action. Implemented in current runtime.
 
 Request:
 
@@ -621,7 +667,7 @@ Response:
 
 ### `manage_profiler(action="get_counters")`
 
-Status: canonical profiler counter action.
+Status: canonical profiler counter action. Implemented in current runtime.
 
 Required support:
 
@@ -637,7 +683,7 @@ Required support:
 
 ### `manage_profiler(action="get_frame_timing")`
 
-Status: canonical frame-timing action.
+Status: canonical frame-timing action. Implemented in current runtime.
 
 Required fields:
 
@@ -651,7 +697,7 @@ Required fields:
 
 ### `manage_build(action="profiles")`
 
-Status: canonical build-profile action.
+Status: canonical build-profile action. Implemented in current runtime.
 
 Purpose:
 
@@ -660,8 +706,8 @@ List and switch Unity 6 Build Profiles without creating a parallel tool.
 Supported modes:
 
 - `list`
-- `set_active`
 - `get_active`
+- `set_active`
 
 Request example:
 
@@ -677,6 +723,8 @@ Response:
 
 - `profiles[]`
 - `active_profile`
+- `active_build_target`
+- `active_build_target_group`
 
 
 

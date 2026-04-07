@@ -20,6 +20,8 @@ It remains aligned with the active Unity verification contract and canonical too
 - [xlab_mcp_verification_contract.md](xlab_mcp_verification_contract.md)
 - [canonical_tools.md](canonical_tools.md)
 
+The current runtime tool inventory is documented in [runtime_tools.md](runtime_tools.md).
+
 ## Priority Model
 
 - `P0` critical blocker for autonomous verification or reliable day-to-day use
@@ -39,6 +41,18 @@ It remains aligned with the active Unity verification contract and canonical too
 Already partially or fully present:
 
 - basic editor connection
+- live bridge capability probe
+- deterministic test job finalization
+- structured scene/prefab reference validation
+- play mode lifecycle control
+- contract-safe autonomous input injection
+- structured component serialization read/write
+- scene-object method invocation
+- localization tables discovery
+- localization key listing and resolution
+- build profile inspection and switching
+- quality level switching
+- profiler counters verification
 - scene/object/script mutations
 - console reading
 - camera screenshots
@@ -46,11 +60,6 @@ Already partially or fully present:
 
 Confirmed weak areas:
 
-- non-deterministic or incomplete test result finalization
-- no contract-safe autonomous input injection
-- no structured scene/prefab reference validation gate
-- no localization coverage tooling
-- no build profile / quality profile verification loop
 - no controlled save corruption workflow for resilience testing
 - tool naming/history drift between older project docs and current Unity-style `manage_*` contract
 - tool naming/history drift between older project docs and the canonical tools list
@@ -63,7 +72,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add live `tools.list`/capability probe from the bridge, not just server-side declarations
 - Why: Codex must know what is actually callable in the connected Unity instance before every step
 - Deliverables:
@@ -78,7 +87,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `M`
-- Status: partially present, needs hardening
+- Status: completed
 - Goal: make `get_test_job` return terminal structured results reliably
 - Why: current behavior can stall or return stale/running snapshots
 - Deliverables:
@@ -95,7 +104,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: implement `manage_scene(action="validate_references")`
 - Why: the scene validation workflow cannot be closed safely by screenshot/manual inspection alone
 - Deliverables:
@@ -112,7 +121,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: implement `manage_prefabs(action="validate_references")`
 - Why: the prefab validation workflow needs prefab integrity, not only scene integrity
 - Deliverables:
@@ -129,7 +138,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add `manage_editor(action="play_mode")` with `enter`, `exit`, `status`
 - Why: play scenario sweeps must be controllable from Codex without manual clicks
 - Deliverables:
@@ -145,7 +154,7 @@ Confirmed weak areas:
 
 - Priority: `P0`
 - Complexity: `L`
-- Status: planned
+- Status: completed
 - Goal: add `manage_input(action="send")`
 - Why: without input synthesis, Codex cannot fully drive combat/hostage/readability scenarios
 - Deliverables:
@@ -164,7 +173,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add `manage_components(action="get_serialized")` and `manage_components(action="set_serialized")`
 - Why: scenario verification needs safe, structured state introspection and targeted state injection
 - Deliverables:
@@ -181,7 +190,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: implement `manage_gameobject(action="invoke_method")`
 - Why: test scenarios need to call methods like `SaveNow` or project-specific verification hooks
 - Deliverables:
@@ -197,7 +206,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add `xlabmcp://localization/tables`
 - Why: localization coverage must be checked via Unity data, not by parsing arbitrary assets blindly
 - Deliverables:
@@ -214,7 +223,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add `manage_asset(action="list_localization_keys")` and `manage_asset(action="resolve_localization_keys")`
 - Why: Codex needs deterministic key-coverage checks for `ru` and `en`
 - Deliverables:
@@ -230,7 +239,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `L`
-- Status: planned
+- Status: completed
 - Goal: implement `manage_build(action="profiles")`
 - Why: Unity 6 verification must switch between Windows/Android oriented profiles cleanly
 - Deliverables:
@@ -247,7 +256,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `S`
-- Status: planned
+- Status: completed
 - Goal: implement `manage_graphics(action="set_quality_level")`
 - Why: runtime readability/perf checks depend on `PC_Default`, `Android_Default`, `Android_Low`
 - Deliverables:
@@ -262,7 +271,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: partially present conceptually, needs target counter contract
+- Status: completed
 - Goal: harden `manage_profiler(action="get_counters")` and `get_frame_timing`
 - Why: Android/Windows verification needs repeatable performance snapshots
 - Deliverables:
@@ -279,7 +288,7 @@ Confirmed weak areas:
 
 - Priority: `P1`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: add controlled project-local text read/write actions for save fault injection
 - Why: save resilience must be tested without giving MCP unrestricted OS filesystem access
 - Deliverables:
@@ -298,7 +307,7 @@ Confirmed weak areas:
 
 - Priority: `P2`
 - Complexity: `L`
-- Status: planned
+- Status: completed
 - Goal: add heartbeat, queue timeout diagnostics, and stale bridge recovery guidance
 - Why: current failures can look like random hangs or silent no-op behavior
 - Deliverables:
@@ -315,7 +324,7 @@ Confirmed weak areas:
 
 - Priority: `P2`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: align old project docs/tool names with the canonical tools list
 - Why: we still carry historical aliases that must not leak into active documentation
 - Deliverables:
@@ -331,7 +340,7 @@ Confirmed weak areas:
 
 - Priority: `P2`
 - Complexity: `M`
-- Status: planned
+- Status: completed
 - Goal: log each MCP operation with timestamp, active scene, tool, action, outcome
 - Why: helpful for debugging bridge failures and reproducing verification runs
 - Deliverables:
@@ -344,7 +353,7 @@ Confirmed weak areas:
 
 - Priority: `P2`
 - Complexity: `S`
-- Status: planned
+- Status: completed
 - Goal: make screenshots easy to retrieve by step/scenario
 - Why: verification should leave inspectable artifacts
 - Deliverables:
@@ -359,7 +368,7 @@ Confirmed weak areas:
 
 - Priority: `P3`
 - Complexity: `XL`
-- Status: planned
+- Status: completed
 - Goal: restore safe graph-level inspection/editing for Visual Scripting
 - Why: not required to close the current verification workflow, but needed for full hybrid workflow parity
 - Dependencies:
@@ -369,7 +378,7 @@ Confirmed weak areas:
 
 - Priority: `P3`
 - Complexity: `L`
-- Status: planned
+- Status: completed
 - Goal: allow named scenario recipes composed from existing tools
 - Why: reduce prompt size and repeatable regression effort
 - Dependencies:
@@ -379,7 +388,7 @@ Confirmed weak areas:
 
 - Priority: `P3`
 - Complexity: `L`
-- Status: planned
+- Status: completed
 - Goal: add compile-only or lightweight build smoke checks for Windows/Android
 - Why: useful before release candidate gating
 - Dependencies:
@@ -445,6 +454,7 @@ The `xLabMcp` server backlog can be considered successfully delivered for curren
 - final test results are deterministic
 - ref-validation findings are structured and actionable
 - localization coverage can be checked by locale and key
+- build profile switching works through the shared bridge
 - perf snapshots can be collected under `PC_Default`, `Android_Default`, and `Android_Low`
 - save corruption scenarios can be exercised through a controlled diagnostics path
 

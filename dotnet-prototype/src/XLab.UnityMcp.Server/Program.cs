@@ -21,16 +21,51 @@ public sealed class McpRequestDispatcher
     public ToolsListResult BuildToolsList()
     {
         var tools = _toolSchemas
+            .Where(kv => IsActiveToolName(kv.Key))
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => new ToolDefinition(kv.Key, kv.Key.Replace('_', ' '), kv.Value))
             .ToList();
         return new ToolsListResult(tools);
     }
 
+    private static bool IsActiveToolName(string name) => name switch
+    {
+        "project_root.set" => true,
+        "project.info" => true,
+        "project.health_check" => true,
+        "project.capabilities" => true,
+        "editor.state" => true,
+        "read_console" => true,
+        "manage_asset" => true,
+        "manage_hierarchy" => true,
+        "manage_scene" => true,
+        "manage_gameobject" => true,
+        "manage_components" => true,
+        "manage_script" => true,
+        "manage_scriptableobject" => true,
+        "manage_prefabs" => true,
+        "manage_graph" => true,
+        "manage_ui" => true,
+        "manage_localization" => true,
+        "manage_editor" => true,
+        "manage_input" => true,
+        "manage_camera" => true,
+        "manage_graphics" => true,
+        "manage_profiler" => true,
+        "manage_build" => true,
+        "run_tests" => true,
+        "get_test_job" => true,
+        _ => false
+    };
+
     public ToolCallResult HandleToolCall(JsonElement root)
     {
         if (!root.TryGetProperty("params", out var p) || !p.TryGetProperty("name", out var n)) return Err("Missing params.name");
         var name = n.GetString() ?? string.Empty;
+        if (!IsActiveToolName(name))
+        {
+            return Err($"Unknown tool: {name}");
+        }
         var a = p.TryGetProperty("arguments", out var args) ? args : default;
         var validationError = ValidateToolArguments(name, a);
         if (validationError != null)
@@ -42,49 +77,29 @@ public sealed class McpRequestDispatcher
         {
             "project_root.set" => ProjectRootSet(a),
             "project.info" => ProjectInfo(a),
+            "project.capabilities" => Bridge("project.capabilities", a),
             "editor.state" => Bridge("editor.state", a),
             "project.health_check" => Health(a),
-
-            "scene.create" => Bridge("scene.create", a),
-            "scene.open" => Bridge("scene.open", a),
-            "scene.save" => Bridge("scene.save", a),
-            "hierarchy.list" => Bridge("hierarchy.list", a),
-            "hierarchy.find" => Bridge("hierarchy.find", a),
-            "gameobject.create" => Bridge("gameobject.create", a),
-            "gameobject.modify" => Bridge("gameobject.modify", a),
-            "component.add" => Bridge("component.add", a),
-            "component.set" => Bridge("component.set", a),
-            "prefab.create" => Bridge("prefab.create", a),
-            "prefab.instantiate" => Bridge("prefab.instantiate", a),
-            "prefab.open" => Bridge("prefab.open", a),
-            "prefab.save" => Bridge("prefab.save", a),
-            "editor.compile_status" => Bridge("editor.compile_status", a),
-            "playmode.enter" => Bridge("playmode.enter", a),
-            "playmode.exit" => Bridge("playmode.exit", a),
-            "console.read" => Bridge("console.read", a),
-            "screenshot.scene" => Bridge("screenshot.scene", a),
-            "screenshot.game" => Bridge("screenshot.game", a),
-            "tests.run_editmode" => Bridge("tests.run_editmode", InjectArg(a, "mode", "EditMode")),
-            "tests.run_all" => Bridge("tests.run_all", InjectArg(a, "mode", "All")),
-            "asset.refresh" => Bridge("asset.refresh", a),
-            "build_settings_scenes" => Bridge("build_settings_scenes", a),
-
-            "script.create_or_edit" => ScriptCreateOrEdit(a),
-            "asset.create_folder" => AssetCreateFolder(a),
-            "asset.exists" => AssetExists(a),
-            "tests.results" => Bridge("tests.results", a),
-            "graph.open_or_create" => Bridge("graph.open_or_create", a),
-            "graph.connect" => Bridge("graph.connect", a),
-            "graph.edit" => Bridge("graph.edit", a),
-            "graph.validate" => Bridge("graph.validate", a),
-            "scene.validate_refs" => Bridge("scene.validate_refs", a),
-            "prefab.validate" => Bridge("prefab.validate", a),
-            "scriptableobject.create_or_edit" => Bridge("scriptableobject.create_or_edit", a),
-            "ui.create_or_edit" => Bridge("ui.create_or_edit", a),
-            "localization.key_add" => Bridge("localization.key_add", a),
-            "asset.list_modified" => Bridge("asset.list_modified", a),
-            "change.summary" => Bridge("change.summary", a),
-            "project.docs_update" => Bridge("project.docs_update", a),
+            "read_console" => ReadConsole(a),
+            "manage_hierarchy" => ManageHierarchy(a),
+            "manage_scene" => ManageScene(a),
+            "manage_prefabs" => ManagePrefabs(a),
+            "manage_script" => ManageScript(a),
+            "manage_scriptableobject" => ManageScriptableObject(a),
+            "manage_graph" => ManageGraph(a),
+            "manage_ui" => ManageUi(a),
+            "manage_localization" => ManageLocalization(a),
+            "manage_editor" => ManageEditor(a),
+            "manage_input" => ManageInput(a),
+            "manage_camera" => ManageCamera(a),
+            "manage_gameobject" => ManageGameObject(a),
+            "manage_components" => ManageComponents(a),
+            "manage_asset" => ManageAsset(a),
+            "manage_graphics" => ManageGraphics(a),
+            "manage_profiler" => ManageProfiler(a),
+            "manage_build" => ManageBuild(a),
+            "run_tests" => RunTests(a),
+            "get_test_job" => GetTestJob(a),
             _ => Err($"Unknown tool: {name}")
         };
     }
@@ -149,24 +164,63 @@ public sealed class McpRequestDispatcher
             }
         }
 
-        // one-of style constraints for tools with aliases
-        if (toolName == "asset.create_folder" && !HasAnyArg(args, "path", "folderPath"))
+        // one-of style constraints for target tool actions
+        if (toolName == "manage_asset")
         {
-            return "requires one of: path | folderPath";
+            var action = (Opt(args, "action") ?? "refresh").ToLowerInvariant();
+            if (action is "create_folder" or "exists" or "read_text_file" or "write_text_file" or "docs_update" && !HasAnyArg(args, "path", "folderPath"))
+            {
+                return "requires one of: path | folderPath";
+            }
+            if (action == "list_localization_keys" && !HasAnyArg(args, "path", "folderPath", "table"))
+            {
+                return "requires one of: path | folderPath | table";
+            }
+            if (action == "resolve_localization_keys")
+            {
+                if (!HasArg(args, "keys"))
+                {
+                    return "requires keys";
+                }
+                if (!HasAnyArg(args, "table", "tableName"))
+                {
+                    return "requires one of: table | tableName";
+                }
+                if (!HasAnyArg(args, "locale"))
+                {
+                    return "requires locale";
+                }
+            }
         }
-        if (toolName == "script.create_or_edit" && !HasAnyArg(args, "scriptName", "path"))
+        if (toolName == "manage_build")
+        {
+            var action = (Opt(args, "action") ?? "profiles").ToLowerInvariant();
+            if (action == "scenes" && !HasAnyArg(args, "path", "folderPath"))
+            {
+                return "requires one of: path | folderPath";
+            }
+            if (action == "profiles")
+            {
+                var mode = (Opt(args, "mode") ?? "get_active").ToLowerInvariant();
+                if (mode == "set_active" && !HasAnyArg(args, "profile", "buildTarget", "target"))
+                {
+                    return "requires one of: profile | buildTarget | target";
+                }
+            }
+        }
+        if (toolName == "manage_script" && !HasAnyArg(args, "scriptName", "path"))
         {
             return "requires one of: scriptName | path";
         }
-        if (toolName == "prefab.create" && !HasAnyArg(args, "sourceObjectPath", "sourcePath", "sourceObjectName"))
+        if (toolName == "manage_prefabs" && !HasAnyArg(args, "sourceObjectPath", "sourcePath", "sourceObjectName"))
         {
             return "requires one of: sourceObjectPath | sourcePath | sourceObjectName";
         }
-        if (toolName == "graph.connect" && !HasAnyArg(args, "fromNodeId", "sourceNodeId", "from", "source"))
+        if (toolName == "manage_graph" && !HasAnyArg(args, "fromNodeId", "sourceNodeId", "from", "source"))
         {
             return "requires one of: fromNodeId | sourceNodeId | from | source";
         }
-        if (toolName == "graph.connect" && !HasAnyArg(args, "toNodeId", "targetNodeId", "to", "target"))
+        if (toolName == "manage_graph" && !HasAnyArg(args, "toNodeId", "targetNodeId", "to", "target"))
         {
             return "requires one of: toNodeId | targetNodeId | to | target";
         }
@@ -432,7 +486,7 @@ public sealed class McpRequestDispatcher
     {
         var root = ResolveRoot(a); if (root is null) return Err("Missing projectRoot");
         var path = Path.Combine(BridgeRoot(root), "test-results.json");
-        if (!File.Exists(path)) return Ok("tests.results: no test-results.json yet");
+        if (!File.Exists(path)) return Ok("test results: no test-results.json yet");
         return Ok(File.ReadAllText(path));
     }
 
@@ -444,7 +498,7 @@ public sealed class McpRequestDispatcher
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, SafeFile(name) + ".json");
         if (!File.Exists(path)) File.WriteAllText(path, "{\n  \"nodes\": [],\n  \"edges\": []\n}\n", Encoding.UTF8);
-        return Ok($"graph.open_or_create: {path}");
+        return Ok($"graph created or opened: {path}");
     }
 
     private ToolCallResult GraphConnect(JsonElement a)
@@ -457,7 +511,7 @@ public sealed class McpRequestDispatcher
         var to = Opt(a, "to") ?? "?";
         var entry = $"// connect {DateTime.UtcNow:O}: {from}->{to}\n";
         File.AppendAllText(path, entry, Encoding.UTF8);
-        return Ok($"graph.connect appended: {path}");
+        return Ok($"manage_graph connect appended: {path}");
     }
 
     private ToolCallResult GraphEdit(JsonElement a)
@@ -468,7 +522,7 @@ public sealed class McpRequestDispatcher
         if (!File.Exists(path)) return Err($"Graph not found: {path}");
         var patch = Opt(a, "patch") ?? Opt(a, "text") ?? "// graph edit\n";
         File.AppendAllText(path, patch + Environment.NewLine, Encoding.UTF8);
-        return Ok($"graph.edit applied: {path}");
+        return Ok($"manage_graph edit applied: {path}");
     }
 
     private ToolCallResult GraphValidate(JsonElement a)
@@ -478,7 +532,7 @@ public sealed class McpRequestDispatcher
         var path = Path.Combine(root, "Assets", "Graphs", SafeFile(name) + ".json");
         if (!File.Exists(path)) return Err($"Graph not found: {path}");
         var text = File.ReadAllText(path);
-        return Ok($"graph.validate: exists=true; size={text.Length}");
+        return Ok($"manage_graph validate: exists=true; size={text.Length}");
     }
 
     private ToolCallResult SceneValidateRefs(JsonElement a)
@@ -489,7 +543,7 @@ public sealed class McpRequestDispatcher
         var path = InRoot(root, rel); if (path is null) return Err("Path escapes project root");
         if (!File.Exists(path)) return Err($"Scene not found: {path}");
         var text = File.ReadAllText(path);
-        return Ok($"scene.validate_refs: exists=true; bytes={text.Length}");
+        return Ok($"scene validation: exists=true; bytes={text.Length}");
     }
 
     private ToolCallResult PrefabValidate(JsonElement a)
@@ -499,7 +553,7 @@ public sealed class McpRequestDispatcher
         if (rel is null) return Err("Missing prefabPath");
         var path = InRoot(root, rel); if (path is null) return Err("Path escapes project root");
         var ok = File.Exists(path);
-        return ok ? Ok($"prefab.validate: ok {path}") : Err($"Prefab not found: {path}");
+        return ok ? Ok($"prefab validation: ok {path}") : Err($"Prefab not found: {path}");
     }
 
     private ToolCallResult ScriptableObjectCreateOrEdit(JsonElement a)
@@ -511,10 +565,10 @@ public sealed class McpRequestDispatcher
         var path = Path.Combine(scriptsDir, Ident(name) + ".cs");
         var content =
             "using UnityEngine;\n\n" +
-            $"[CreateAssetMenu(menuName = \"Breach/{Ident(name)}\")]\n" +
+$"[CreateAssetMenu(menuName = \"xLabMcp/{Ident(name)}\")]\n" +
             $"public sealed class {Ident(name)} : ScriptableObject {{ }}\n";
         File.WriteAllText(path, content, Encoding.UTF8);
-        return Ok($"scriptableobject.create_or_edit: {path}");
+        return Ok($"manage_scriptableobject create_or_edit: {path}");
     }
 
     private ToolCallResult UiCreateOrEdit(JsonElement a)
@@ -525,7 +579,7 @@ public sealed class McpRequestDispatcher
         var path = Path.Combine(dir, "UIPlan.codex.md");
         var body = Opt(a, "text") ?? "- HUD Root\n- Result Panel\n- Objective Tracker\n";
         File.WriteAllText(path, body, Encoding.UTF8);
-        return Ok($"ui.create_or_edit: {path}");
+        return Ok($"ui content saved: {path}");
     }
 
     private ToolCallResult LocalizationKeyAdd(JsonElement a)
@@ -537,7 +591,7 @@ public sealed class McpRequestDispatcher
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "keys.csv");
         File.AppendAllText(path, $"{key},{value}{Environment.NewLine}", Encoding.UTF8);
-        return Ok($"localization.key_add: {key}");
+        return Ok($"manage_localization key_add: {key}");
     }
 
     private ToolCallResult AssetListModified(JsonElement a)
@@ -554,7 +608,7 @@ public sealed class McpRequestDispatcher
     {
         var root = ResolveRoot(a); if (root is null) return Err("Missing projectRoot");
         var gitDir = root;
-        if (!Directory.Exists(Path.Combine(gitDir, ".git"))) return Ok("change.summary: no git repo");
+        if (!Directory.Exists(Path.Combine(gitDir, ".git"))) return Ok("change summary: no git repo");
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo("git", "status --short")
@@ -566,14 +620,14 @@ public sealed class McpRequestDispatcher
                 CreateNoWindow = true
             };
             using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null) return Err("change.summary: failed to start git");
+            if (proc == null) return Err("change summary: failed to start git");
             var outText = proc.StandardOutput.ReadToEnd();
             proc.WaitForExit(3000);
             return Ok(string.IsNullOrWhiteSpace(outText) ? "clean" : outText.TrimEnd());
         }
         catch (Exception ex)
         {
-            return Err($"change.summary error: {ex.Message}");
+            return Err($"change summary error: {ex.Message}");
         }
     }
 
@@ -585,7 +639,198 @@ public sealed class McpRequestDispatcher
         var path = Path.Combine(docs, "MCP_PROGRESS.md");
         var line = Opt(a, "line") ?? $"Updated at {DateTime.UtcNow:O}";
         File.AppendAllText(path, "- " + line + Environment.NewLine, Encoding.UTF8);
-        return Ok($"project.docs_update: {path}");
+        return Ok($"project docs updated: {path}");
+    }
+
+    private ToolCallResult ReadConsole(JsonElement a)
+    {
+        return Bridge("read_console", a);
+    }
+
+    private ToolCallResult ManageScene(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "validate_references").ToLowerInvariant();
+        var root = ResolveRoot(a);
+        if (root is null) return Err("Missing projectRoot");
+
+        return action switch
+        {
+            "create" => Bridge("manage_scene", InjectArg(InjectArg(a, "projectRoot", root), "action", "create")),
+            "open" => Bridge("manage_scene", InjectArg(InjectArg(a, "projectRoot", root), "action", "open")),
+            "save" => Bridge("manage_scene", InjectArg(InjectArg(a, "projectRoot", root), "action", "save")),
+            "validate_references" => Bridge("manage_scene", InjectArg(InjectArg(a, "projectRoot", root), "scenePath", Opt(a, "path") ?? Opt(a, "scenePath") ?? Opt(a, "scene_path") ?? string.Empty)),
+            _ => Err($"Unsupported manage_scene action: {action}")
+        };
+    }
+
+    private ToolCallResult ManagePrefabs(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "validate_references").ToLowerInvariant();
+        var root = ResolveRoot(a);
+        if (root is null) return Err("Missing projectRoot");
+
+        return action switch
+        {
+            "create" => Bridge("manage_prefabs", InjectArg(InjectArg(a, "projectRoot", root), "action", "create")),
+            "open" => Bridge("manage_prefabs", InjectArg(InjectArg(a, "projectRoot", root), "action", "open")),
+            "save" => Bridge("manage_prefabs", InjectArg(InjectArg(a, "projectRoot", root), "action", "save")),
+            "instantiate" => Bridge("manage_prefabs", InjectArg(InjectArg(a, "projectRoot", root), "action", "instantiate")),
+            "validate_references" => Bridge("manage_prefabs", InjectArg(InjectArg(a, "projectRoot", root), "prefabPath", Opt(a, "path") ?? Opt(a, "prefabPath") ?? Opt(a, "prefab_path") ?? string.Empty)),
+            _ => Err($"Unsupported manage_prefabs action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageEditor(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "play_mode").ToLowerInvariant();
+        var mode = (Opt(a, "mode") ?? "status").ToLowerInvariant();
+        return action switch
+        {
+            "play_mode" => mode switch
+            {
+                "enter" => Bridge("manage_editor", InjectArg(a, "mode", "enter")),
+                "exit" => Bridge("manage_editor", InjectArg(a, "mode", "exit")),
+                "status" => Bridge("manage_editor", InjectArg(a, "mode", "status")),
+                _ => Err($"Unsupported play_mode mode: {mode}")
+            },
+            "status" => Bridge("manage_editor", InjectArg(a, "mode", "status")),
+            "compile_status" => Bridge("manage_editor", InjectArg(a, "action", "compile_status")),
+            _ => Err($"Unsupported manage_editor action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageInput(JsonElement a)
+    {
+        return Bridge("manage_input", a);
+    }
+
+    private ToolCallResult ManageCamera(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "screenshot").ToLowerInvariant();
+        if (action != "screenshot")
+        {
+            return Err($"Unsupported manage_camera action: {action}");
+        }
+
+        return Bridge("manage_camera", a);
+    }
+
+    private ToolCallResult ManageGameObject(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "modify").ToLowerInvariant();
+        return action switch
+        {
+            "create" => Bridge("manage_gameobject", InjectArg(a, "action", "create")),
+            "modify" => Bridge("manage_gameobject", InjectArg(a, "action", "modify")),
+            "invoke_method" => Bridge("manage_gameobject", InjectArg(a, "action", "invoke_method")),
+            _ => Err($"Unsupported manage_gameobject action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageComponents(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "add").ToLowerInvariant();
+        return action switch
+        {
+            "add" => Bridge("manage_components", InjectArg(a, "action", "add")),
+            "set" => Bridge("manage_components", InjectArg(a, "action", "set")),
+            "get_serialized" => Bridge("manage_components", InjectArg(a, "action", "get_serialized")),
+            "set_serialized" => Bridge("manage_components", InjectArg(a, "action", "set_serialized")),
+            _ => Err($"Unsupported manage_components action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageAsset(JsonElement a)
+    {
+        return Bridge("manage_asset", a);
+    }
+
+    private ToolCallResult ManageHierarchy(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "list").ToLowerInvariant();
+        return action switch
+        {
+            "list" => Bridge("manage_hierarchy", InjectArg(a, "action", "list")),
+            "find" => Bridge("manage_hierarchy", InjectArg(a, "action", "find")),
+            _ => Err($"Unsupported manage_hierarchy action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageScript(JsonElement a)
+    {
+        return Bridge("manage_script", a);
+    }
+
+    private ToolCallResult ManageScriptableObject(JsonElement a)
+    {
+        return Bridge("manage_scriptableobject", a);
+    }
+
+    private ToolCallResult ManageGraph(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "open_or_create").ToLowerInvariant();
+        return action switch
+        {
+            "open_or_create" => Bridge("manage_graph", InjectArg(a, "action", "open_or_create")),
+            "connect" => Bridge("manage_graph", InjectArg(a, "action", "connect")),
+            "edit" => Bridge("manage_graph", InjectArg(a, "action", "edit")),
+            "validate" => Bridge("manage_graph", InjectArg(a, "action", "validate")),
+            _ => Err($"Unsupported manage_graph action: {action}")
+        };
+    }
+
+    private ToolCallResult ManageUi(JsonElement a)
+    {
+        return Bridge("manage_ui", a);
+    }
+
+    private ToolCallResult ManageLocalization(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "key_add").ToLowerInvariant();
+        if (action == "key_add" && !HasArg(a, "key"))
+        {
+            return Err("Missing key");
+        }
+        if (action == "tables")
+        {
+            return Bridge("manage_localization", InjectArg(a, "action", "tables"));
+        }
+        return Bridge("manage_localization", a);
+    }
+
+    private ToolCallResult ManageGraphics(JsonElement a)
+    {
+        return Bridge("manage_graphics", a);
+    }
+
+    private ToolCallResult ManageProfiler(JsonElement a)
+    {
+        return Bridge("manage_profiler", a);
+    }
+
+    private ToolCallResult ManageBuild(JsonElement a)
+    {
+        var action = (Opt(a, "action") ?? "profiles").ToLowerInvariant();
+        return action switch
+        {
+            "profiles" => Bridge("manage_build", a),
+            "scenes" => Bridge("manage_build", InjectArg(a, "action", "scenes")),
+            _ => Err($"Unsupported manage_build action: {action}")
+        };
+    }
+
+    private ToolCallResult RunTests(JsonElement a)
+    {
+        var mode = Opt(a, "mode") ?? "EditMode";
+        var payload = InjectArg(a, "mode",
+            string.Equals(mode, "PlayMode", StringComparison.OrdinalIgnoreCase) ? "PlayMode" :
+            string.Equals(mode, "All", StringComparison.OrdinalIgnoreCase) ? "All" : "EditMode");
+        return Bridge("run_tests", payload);
+    }
+
+    private ToolCallResult GetTestJob(JsonElement a)
+    {
+        return Bridge("get_test_job", a);
     }
 
     private string? ResolveRoot(JsonElement a) => Req(a, "projectRoot") ?? _defaultProjectRoot;
@@ -678,7 +923,7 @@ public sealed class McpRequestDispatcher
         var contractPath = ResolveContractPath();
         if (contractPath == null)
         {
-            throw new InvalidOperationException("BREACH contract file not found: contracts/breach-tools.schema.json");
+        throw new InvalidOperationException("xLabMcp contract file not found: contracts/xlabmcp-tools.schema.json");
         }
 
         var node = JsonNode.Parse(File.ReadAllText(contractPath)) as JsonObject;
@@ -708,11 +953,11 @@ public sealed class McpRequestDispatcher
     {
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "contracts", "breach-tools.schema.json"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "contracts", "breach-tools.schema.json"),
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "contracts", "breach-tools.schema.json"),
-            Path.Combine(Directory.GetCurrentDirectory(), "contracts", "breach-tools.schema.json"),
-            Path.Combine(Directory.GetCurrentDirectory(), "dotnet-prototype", "contracts", "breach-tools.schema.json"),
+            Path.Combine(AppContext.BaseDirectory, "contracts", "xlabmcp-tools.schema.json"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "contracts", "xlabmcp-tools.schema.json"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "contracts", "xlabmcp-tools.schema.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "contracts", "xlabmcp-tools.schema.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "dotnet-prototype", "contracts", "xlabmcp-tools.schema.json"),
         };
 
         foreach (var path in candidates.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))

@@ -7,10 +7,10 @@
 - `scene.detect_reference_regressions`
 
 ## Graph safety
-- `graph.inspect_asset`
-- `graph.validate`
-- `graph.validate_reaction_density`
-- `graph.export_review_summary`
+- `manage_graph(action="validate")`
+- `manage_graph(action="inspect_asset")`
+- `manage_graph(action="validate_reaction_density")`
+- `manage_graph(action="export_review_summary")`
 
 ## Data and save safety
 - `scriptableobject.validate_schema`
@@ -27,5 +27,5 @@
 ## Release and review
 - `release.preflight`
 - `quality.validate_profile_assignment`
-- `change.summary`
+- `manage_asset(action="change_summary")`
 - `change.classify_risk`
