@@ -4,6 +4,7 @@ Server-side planning and verification docs for xLabMcp.
 
 ## Active docs
 
+- [project_documentation.md](project_documentation.md)
 - [canonical_tools.md](canonical_tools.md)
 - [runtime_tools.md](runtime_tools.md)
 - [xlab_mcp_server_backlog.md](xlab_mcp_server_backlog.md)
