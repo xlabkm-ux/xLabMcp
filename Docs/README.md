@@ -4,6 +4,7 @@ Server-side planning and verification docs for xLabMcp.
 
 ## Active docs
 
+- [workspace_index.md](workspace_index.md)
 - [index.md](index.md)
 - [project_documentation.md](project_documentation.md)
 - [canonical_tools.md](canonical_tools.md)

@@ -20,6 +20,7 @@ dotnet test .\dotnet-prototype\XLab.UnityMcp.sln -c Debug
 ## Documentation
 
 - [Active docs index](Docs/README.md)
+- [Workspace index](Docs/workspace_index.md)
 - [Short docs index](Docs/index.md)
 - [Project documentation map](Docs/project_documentation.md)
 - [Short MCP index](mcp/index.md)
