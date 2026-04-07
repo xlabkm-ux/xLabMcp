@@ -2,7 +2,7 @@
     "$schema":  "https://json-schema.org/draft/2020-12/schema",
     "title":  "BREACH MCP Tool Contract",
     "version":  "0.4.1",
-    "description":  "Formal tool argument contract for the 23-step BREACH pipeline.",
+    "description":  "Legacy-compatible tool argument contract for the 23-step BREACH pipeline. Canonical MCP resources and tools are documented in Docs/canonical_tools.md.",
     "steps":  {
                   "1":  [
                             "project_root.set",
