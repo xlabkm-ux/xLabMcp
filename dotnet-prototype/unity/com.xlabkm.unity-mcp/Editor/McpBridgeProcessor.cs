@@ -16,6 +16,8 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using Unity.Profiling;
 
+#nullable enable
+
 namespace XLab.UnityMcp.Editor
 {
     [InitializeOnLoad]
@@ -36,6 +38,17 @@ namespace XLab.UnityMcp.Editor
     private static string? _lastScreenshotScenario;
     private static string? _lastScreenshotStep;
     private static string? _lastScreenshotLabel;
+
+    private sealed class PendingInputJob
+    {
+        public string JobId { get; init; } = string.Empty;
+        public DateTime ReleaseAtUtc { get; init; }
+        public List<KeyCode> Keys { get; init; } = new();
+        public List<int> MouseButtons { get; init; } = new();
+        public (int x, int y)? MousePosition { get; init; }
+        public int FrameStart { get; init; }
+        public int FrameEnd { get; init; }
+    }
 
     static McpBridgeProcessor()
     {
@@ -1405,8 +1418,14 @@ namespace XLab.UnityMcp.Editor
     private static string Sha256Hex(string text)
     {
         var bytes = Encoding.UTF8.GetBytes(text ?? string.Empty);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(bytes);
+        var sb = new StringBuilder(hash.Length * 2);
+        foreach (var b in hash)
+        {
+            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+        }
+        return sb.ToString();
     }
 
     private static (bool, string) ManageAsset(string raw)
@@ -1483,6 +1502,21 @@ namespace XLab.UnityMcp.Editor
         return action == "create_or_edit"
             ? ScriptCreateOrEdit(raw)
             : (false, $"Unsupported manage_script action: {action}");
+    }
+
+    private static (bool, string) ManagePrefabs(string raw)
+    {
+        var action = (JsonArgumentString(raw, "action") ?? "create").ToLowerInvariant();
+        return action switch
+        {
+            "create" => PrefabCreate(raw),
+            "instantiate" => PrefabInstantiate(raw),
+            "open" => PrefabOpen(raw),
+            "save" => PrefabSave(),
+            "validate" => PrefabValidate(raw),
+            "validate_references" => PrefabValidate(raw),
+            _ => (false, $"Unsupported manage_prefabs action: {action}")
+        };
     }
 
     private static (bool, string) ManageScriptableObject(string raw)
@@ -1575,12 +1609,33 @@ namespace XLab.UnityMcp.Editor
 
         if (durationMs > 0)
         {
+            var queuedKeys = keys
+                .Select(k =>
+                {
+                    TryParseKeyCode(k, out var keyCode);
+                    return keyCode;
+                })
+                .Where(keyCode => keyCode != KeyCode.None)
+                .ToList();
+            var queuedMouseButtons = mouseButtons
+                .Where(b => TryParseMouseButton(b, out _))
+                .Select(b =>
+                {
+                    var normalized = b.Trim().ToLowerInvariant();
+                    return normalized switch
+                    {
+                        "right" or "rightmouse" or "right_mouse" or "1" => 1,
+                        "middle" or "middlemouse" or "middle_mouse" or "2" => 2,
+                        _ => 0
+                    };
+                })
+                .ToList();
             var job = new PendingInputJob
             {
                 JobId = Guid.NewGuid().ToString("N"),
                 ReleaseAtUtc = DateTime.UtcNow.AddMilliseconds(durationMs),
-                Keys = keys.Where(k => TryParseKeyCode(k, out _)).ToList(),
-                MouseButtons = mouseButtons.Where(b => TryParseMouseButton(b, out _)).ToList(),
+                Keys = queuedKeys,
+                MouseButtons = queuedMouseButtons,
                 MousePosition = mousePosition,
                 FrameStart = startFrame,
                 FrameEnd = startFrame + Math.Max(1, durationMs / 16)
@@ -1801,7 +1856,7 @@ namespace XLab.UnityMcp.Editor
             "Render" => ProfilerCategory.Render,
             "Memory" => ProfilerCategory.Memory,
             "Scripts" => ProfilerCategory.Scripts,
-            _ => ProfilerCategory.Any
+            _ => ProfilerCategory.Scripts
         };
     }
 
@@ -2270,7 +2325,7 @@ namespace XLab.UnityMcp.Editor
             status["observedPlayModeState"] = change.ToString();
             status["observedAtUtc"] = DateTime.UtcNow.ToString("O");
 
-            var mode = StatusString(status, "mode");
+            var mode = StatusString(status.ToJsonString(), "mode");
             var changeName = change.ToString();
             if (string.Equals(changeName, "EnteredPlayMode", StringComparison.OrdinalIgnoreCase) && string.Equals(mode, "enter", StringComparison.OrdinalIgnoreCase))
             {
@@ -2387,7 +2442,7 @@ namespace XLab.UnityMcp.Editor
         });
     }
 
-    private static void SendMouseButtonEvent(EditorWindow window, int button, bool keyDown, (float x, float y)? position)
+    private static void SendMouseButtonEvent(EditorWindow window, int button, bool keyDown, (int x, int y)? position)
     {
         var evt = new Event
         {
@@ -2505,7 +2560,7 @@ namespace XLab.UnityMcp.Editor
         return null;
     }
 
-    private static (float x, float y)? ReadIntPair(JsonElement args, string key)
+    private static (int x, int y)? ReadIntPair(JsonElement args, string key)
     {
         if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(key, out var node) || node.ValueKind != JsonValueKind.Array)
         {
@@ -2518,12 +2573,29 @@ namespace XLab.UnityMcp.Editor
             return null;
         }
 
-        if (TryReadFloat(values[0], out var x) && TryReadFloat(values[1], out var y))
+        if (TryReadInt(values[0], out var x) && TryReadInt(values[1], out var y))
         {
             return (x, y);
         }
 
         return null;
+    }
+
+    private static bool TryReadInt(JsonElement element, out int value)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        value = 0;
+        return false;
     }
 
     private static bool TryReadFloat(JsonElement element, out float value)
@@ -3329,6 +3401,42 @@ namespace XLab.UnityMcp.Editor
         return (true, $"manage_scriptableobject create_or_edit: {relativePath}");
     }
 
+    private static (bool, string) ScriptCreateOrEdit(string raw)
+    {
+        var name = JsonArgumentString(raw, "name") ?? JsonArgumentString(raw, "scriptName") ?? "NewBehaviour";
+        var folder = JsonArgumentString(raw, "folder") ?? "Assets/Scripts";
+        var namespaceName = JsonArgumentString(raw, "namespace") ?? string.Empty;
+        var baseClass = JsonArgumentString(raw, "baseClass") ?? "MonoBehaviour";
+        var safeName = Regex.Replace(name, @"[^A-Za-z0-9_]", "_");
+        var normalizedFolder = folder.Replace("\\", "/");
+        if (!normalizedFolder.StartsWith("Assets/", StringComparison.Ordinal))
+        {
+            return (false, "folder must be under Assets/");
+        }
+
+        var relativePath = $"{normalizedFolder}/{safeName}.cs";
+        var full = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+
+        var userContents = JsonArgumentString(raw, "contents") ?? JsonArgumentString(raw, "text");
+        var contents = !string.IsNullOrWhiteSpace(userContents)
+            ? userContents
+            : BuildScriptTemplate(safeName, namespaceName, baseClass);
+
+        var mode = (JsonArgumentString(raw, "mode") ?? "create").ToLowerInvariant();
+        if (mode == "append" && File.Exists(full))
+        {
+            File.AppendAllText(full, contents, Encoding.UTF8);
+        }
+        else
+        {
+            File.WriteAllText(full, contents, Encoding.UTF8);
+        }
+
+        AssetDatabase.Refresh();
+        return (true, $"manage_script create_or_edit: {relativePath}");
+    }
+
     private static (bool, string) SceneValidateRefs(string raw)
     {
         var scenePath = JsonArgumentString(raw, "scenePath") ?? JsonArgumentString(raw, "path");
@@ -3710,18 +3818,18 @@ namespace XLab.UnityMcp.Editor
 
         if (status != null)
         {
-            var state = StatusString(status, "state");
+            var state = StatusString(status.ToJsonString(), "state");
             if (string.Equals(state, "running", StringComparison.OrdinalIgnoreCase))
             {
-                var startedAt = StatusString(status, "startedAtUtc");
+                var startedAt = StatusString(status.ToJsonString(), "startedAtUtc");
                 if (TryParseUtc(startedAt, out var started) && DateTime.UtcNow - started > TimeSpan.FromMinutes(30))
                 {
-                    return (true, MergeStatusAndSummary(status, latestSummary, "timeout").ToJsonString());
+                return (true, MergeStatusAndSummary(status.ToJsonString(), latestSummary, "timeout"));
                 }
 
                 if (latestSummary != null)
                 {
-                    return (true, MergeStatusAndSummary(status, latestSummary, "completed").ToJsonString());
+                    return (true, MergeStatusAndSummary(status.ToJsonString(), latestSummary, "completed"));
                 }
 
                 return (true, status.ToJsonString());
@@ -3729,7 +3837,7 @@ namespace XLab.UnityMcp.Editor
 
             if (latestSummary != null)
             {
-                return (true, MergeStatusAndSummary(status, latestSummary, state).ToJsonString());
+                return (true, MergeStatusAndSummary(status.ToJsonString(), latestSummary, state));
             }
 
             return (true, status.ToJsonString());
@@ -4761,6 +4869,22 @@ namespace {ns}
 ";
     }
 
+    private static string BuildScriptTemplate(string className, string namespaceName, string baseClass)
+    {
+        var ns = string.IsNullOrWhiteSpace(namespaceName) ? "xLabMcp.Scripts" : namespaceName.Trim();
+        var safeBaseClass = string.IsNullOrWhiteSpace(baseClass) ? "MonoBehaviour" : baseClass.Trim();
+        return
+$@"using UnityEngine;
+
+namespace {ns}
+{{
+    public sealed class {className} : {safeBaseClass}
+    {{
+    }}
+}}
+";
+    }
+
     private static void WriteTestsStatus(string payload)
     {
         try
@@ -4870,14 +4994,9 @@ namespace {ns}
         }
     }
 
-    private static JsonObject MergeStatusAndSummary(JsonObject status, JsonObject? summary, string? forcedState)
+    private static string MergeStatusAndSummary(string statusJson, JsonObject? summary, string? forcedState)
     {
-        var merged = new JsonObject();
-        foreach (var kv in status)
-        {
-            merged[kv.Key] = kv.Value?.DeepClone();
-        }
-
+        var merged = JsonNode.Parse(statusJson) as JsonObject ?? new JsonObject();
         if (!string.IsNullOrWhiteSpace(forcedState))
         {
             merged["state"] = forcedState;
@@ -4892,12 +5011,43 @@ namespace {ns}
         }
 
         merged["resolvedAtUtc"] = DateTime.UtcNow.ToString("O");
-        return merged;
+        return merged.ToJsonString();
     }
 
-    private static string? StatusString(JsonObject status, string key)
+    private static string? StatusString(string statusJson, string key)
     {
-        return status[key]?.GetValue<string>();
+        var marker = $"\"{key}\":";
+        var index = statusJson.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var valueStart = index + marker.Length;
+        while (valueStart < statusJson.Length && char.IsWhiteSpace(statusJson[valueStart]))
+        {
+            valueStart++;
+        }
+
+        if (valueStart >= statusJson.Length)
+        {
+            return null;
+        }
+
+        if (statusJson[valueStart] == '"')
+        {
+            valueStart++;
+            var valueEnd = statusJson.IndexOf('"', valueStart);
+            return valueEnd >= 0 ? statusJson.Substring(valueStart, valueEnd - valueStart) : null;
+        }
+
+        var end = valueStart;
+        while (end < statusJson.Length && statusJson[end] != ',' && statusJson[end] != '}' && !char.IsWhiteSpace(statusJson[end]))
+        {
+            end++;
+        }
+
+        return end > valueStart ? statusJson.Substring(valueStart, end - valueStart) : null;
     }
 
     private static bool TryParseUtc(string? text, out DateTime value)
