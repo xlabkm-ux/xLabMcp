@@ -61,6 +61,9 @@ Verification and runtime control:
 - `manage_editor(action="play_mode")`
 - `manage_editor(action="status")`
 - `manage_editor(action="compile_status")`
+- `manage_editor(action="install")`
+- `manage_editor(action="update")`
+- `manage_editor(action="delete")`
 - `manage_gameobject(action="invoke_method")`
 - `manage_components(action="get_serialized")`
 - `manage_components(action="set_serialized")`

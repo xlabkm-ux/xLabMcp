@@ -116,6 +116,8 @@ needed for verification.
 - Health payloads expose heartbeat, queue depth, audit trail, and screenshot
   indexing status
 - Screenshot artifacts are indexed under `Library/XLabMcpBridge/screenshots`
+- `manage_editor` also owns Unity MCP package lifecycle operations:
+  `install`, `update`, and `delete` for the embedded `Packages/com.xlabkm.unity-mcp` package
 
 ## 4. Verification Workflow
 
@@ -188,7 +190,8 @@ The server backlog is complete:
 - the active runtime inventory is target-only
 - the bridge includes capability, health, audit, diagnostics, screenshot
   indexing, localization validation, build, profiler, save, schema
-  validation, quality-profile validation, and change-risk workflows
+  validation, quality-profile validation, change-risk workflows, and
+  server-side Unity MCP package lifecycle management
 
 ## 7. Maintenance Rules
 

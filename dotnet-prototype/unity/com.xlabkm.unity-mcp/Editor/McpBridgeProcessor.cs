@@ -1337,6 +1337,9 @@ namespace XLab.UnityMcp.Editor
         AddCapability(capabilities, "manage_editor", "play_mode", true, "Play mode enter/exit/status is supported.");
         AddCapability(capabilities, "manage_editor", "status", true, "Editor status is supported.");
         AddCapability(capabilities, "manage_editor", "compile_status", true, "Compile status is supported.");
+        AddCapability(capabilities, "manage_editor", "install", true, "Server-side embedded Unity MCP package installation is supported.");
+        AddCapability(capabilities, "manage_editor", "update", true, "Server-side embedded Unity MCP package update is supported.");
+        AddCapability(capabilities, "manage_editor", "delete", true, "Server-side embedded Unity MCP package removal is supported.");
 
         AddCapability(capabilities, "manage_input", "send", true, "Keyboard and mouse event synthesis is supported during Play Mode.");
 

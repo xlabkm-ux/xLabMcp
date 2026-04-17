@@ -548,6 +548,33 @@ Response:
 - `time`
 - `activeScene`
 
+### `manage_editor(action="install"|"update"|"delete")`
+
+Status: canonical Unity MCP package lifecycle actions.
+
+Purpose:
+
+Allow the server runtime to install, refresh, or remove the embedded
+`Packages/com.xlabkm.unity-mcp` package in a target Unity project without
+requiring the bridge to already be active.
+
+Request fields:
+
+- `projectRoot`
+- `packageSourcePath` optional for `install` and `update`
+
+Response fields:
+
+- `tool`
+- `action`
+- `packageName`
+- `packageVersion`
+- `projectRoot`
+- `sourcePath`
+- `targetPath`
+- `changed`
+- `installed`
+
 
 ### `manage_gameobject(action="invoke_method")`
 

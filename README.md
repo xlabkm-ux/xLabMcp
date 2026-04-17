@@ -17,6 +17,10 @@ Clean repository for the XLab Unity MCP server prototype.
 dotnet test .\dotnet-prototype\XLab.UnityMcp.sln -c Debug
 ```
 
+The runtime also supports Unity-side MCP package lifecycle management through
+`manage_editor(action="install"|"update"|"delete")`, which manages the
+embedded `Packages/com.xlabkm.unity-mcp` package inside a target Unity project.
+
 ## Documentation
 
 - [Active docs index](Docs/README.md)

@@ -989,6 +989,103 @@ public sealed class DispatcherTests
             }
         }
     }
+
+    [Fact]
+    public void HandleToolCall_ManageEditorInstallUpdateDelete_ManagesEmbeddedUnityPackage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(Path.GetTempPath(), "xlab-mcp-package-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Packages"));
+        Directory.CreateDirectory(Path.Combine(source, "Editor"));
+        File.WriteAllText(Path.Combine(source, "package.json"), """
+        {
+          "name": "com.xlabkm.unity-mcp",
+          "version": "1.2.3"
+        }
+        """);
+        File.WriteAllText(Path.Combine(source, "Editor", "McpBridgeProcessor.cs"), "// v1");
+
+        try
+        {
+            using var installDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "install",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "packageSourcePath": "{{source.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var installResult = _dispatcher.HandleToolCall(installDoc.RootElement);
+            Assert.False(installResult.IsError);
+            using var installPayload = JsonDocument.Parse(installResult.Content[0].Text);
+            Assert.Equal("install", installPayload.RootElement.GetProperty("action").GetString());
+            Assert.True(installPayload.RootElement.GetProperty("changed").GetBoolean());
+
+            var embeddedPackagePath = Path.Combine(root, "Packages", "com.xlabkm.unity-mcp");
+            Assert.True(File.Exists(Path.Combine(embeddedPackagePath, "package.json")));
+            Assert.True(File.Exists(Path.Combine(embeddedPackagePath, "Editor", "McpBridgeProcessor.cs")));
+
+            File.WriteAllText(Path.Combine(source, "Editor", "McpBridgeProcessor.cs"), "// v2");
+
+            using var updateDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "update",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "packageSourcePath": "{{source.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var updateResult = _dispatcher.HandleToolCall(updateDoc.RootElement);
+            Assert.False(updateResult.IsError);
+            using var updatePayload = JsonDocument.Parse(updateResult.Content[0].Text);
+            Assert.Equal("update", updatePayload.RootElement.GetProperty("action").GetString());
+            Assert.True(updatePayload.RootElement.GetProperty("changed").GetBoolean());
+            Assert.Equal("// v2", File.ReadAllText(Path.Combine(embeddedPackagePath, "Editor", "McpBridgeProcessor.cs")));
+
+            using var deleteDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "delete",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var deleteResult = _dispatcher.HandleToolCall(deleteDoc.RootElement);
+            Assert.False(deleteResult.IsError);
+            using var deletePayload = JsonDocument.Parse(deleteResult.Content[0].Text);
+            Assert.Equal("delete", deletePayload.RootElement.GetProperty("action").GetString());
+            Assert.True(deletePayload.RootElement.GetProperty("changed").GetBoolean());
+            Assert.False(Directory.Exists(embeddedPackagePath));
+            Assert.False(deletePayload.RootElement.GetProperty("installed").GetBoolean());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+
+            if (Directory.Exists(source))
+            {
+                Directory.Delete(source, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public async Task HandleToolCall_BridgeRoundtrip_ReturnsBridgeResponse()
     {

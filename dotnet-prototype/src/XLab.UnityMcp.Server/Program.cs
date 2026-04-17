@@ -9,6 +9,7 @@ server.Run();
 
 public sealed class McpRequestDispatcher
 {
+    private const string UnityMcpPackageName = "com.xlabkm.unity-mcp";
     private const string Urp = "com.unity.render-pipelines.universal";
     private string? _defaultProjectRoot;
     private readonly Dictionary<string, JsonObject> _toolSchemas = BuildToolSchemas();
@@ -686,6 +687,9 @@ $"[CreateAssetMenu(menuName = \"xLabMcp/{Ident(name)}\")]\n" +
         var mode = (Opt(a, "mode") ?? "status").ToLowerInvariant();
         return action switch
         {
+            "install" => InstallUnityMcpPackage(a),
+            "update" => UpdateUnityMcpPackage(a),
+            "delete" => DeleteUnityMcpPackage(a),
             "play_mode" => mode switch
             {
                 "enter" => Bridge("manage_editor", InjectArg(a, "mode", "enter")),
@@ -697,6 +701,66 @@ $"[CreateAssetMenu(menuName = \"xLabMcp/{Ident(name)}\")]\n" +
             "compile_status" => Bridge("manage_editor", InjectArg(a, "action", "compile_status")),
             _ => Err($"Unsupported manage_editor action: {action}")
         };
+    }
+
+    private ToolCallResult InstallUnityMcpPackage(JsonElement a)
+    {
+        var root = ResolveRoot(a); if (root is null) return Err("Missing projectRoot");
+        if (!Directory.Exists(root)) return Err($"Project root not found: {root}");
+
+        var resolve = ResolveUnityMcpPackagePaths(root, a);
+        if (!resolve.Success)
+        {
+            return Err(resolve.Error!);
+        }
+
+        if (Directory.Exists(resolve.TargetPath!))
+        {
+            return Err($"Unity MCP package already installed at {resolve.TargetPath}. Use action=update.");
+        }
+
+        CopyDirectory(resolve.SourcePath!, resolve.TargetPath!);
+        return Ok(PackageLifecyclePayload("install", root, resolve.SourcePath!, resolve.TargetPath!, changed: true));
+    }
+
+    private ToolCallResult UpdateUnityMcpPackage(JsonElement a)
+    {
+        var root = ResolveRoot(a); if (root is null) return Err("Missing projectRoot");
+        if (!Directory.Exists(root)) return Err($"Project root not found: {root}");
+
+        var resolve = ResolveUnityMcpPackagePaths(root, a);
+        if (!resolve.Success)
+        {
+            return Err(resolve.Error!);
+        }
+
+        if (PathsEqual(resolve.SourcePath!, resolve.TargetPath!))
+        {
+            return Ok(PackageLifecyclePayload("update", root, resolve.SourcePath!, resolve.TargetPath!, changed: false));
+        }
+
+        if (Directory.Exists(resolve.TargetPath!))
+        {
+            Directory.Delete(resolve.TargetPath!, recursive: true);
+        }
+
+        CopyDirectory(resolve.SourcePath!, resolve.TargetPath!);
+        return Ok(PackageLifecyclePayload("update", root, resolve.SourcePath!, resolve.TargetPath!, changed: true));
+    }
+
+    private ToolCallResult DeleteUnityMcpPackage(JsonElement a)
+    {
+        var root = ResolveRoot(a); if (root is null) return Err("Missing projectRoot");
+        if (!Directory.Exists(root)) return Err($"Project root not found: {root}");
+
+        var targetPath = Path.Combine(root, "Packages", UnityMcpPackageName);
+        var changed = Directory.Exists(targetPath);
+        if (changed)
+        {
+            Directory.Delete(targetPath, recursive: true);
+        }
+
+        return Ok(PackageLifecyclePayload("delete", root, null, targetPath, changed));
     }
 
     private ToolCallResult ManageInput(JsonElement a)
@@ -893,12 +957,124 @@ $"[CreateAssetMenu(menuName = \"xLabMcp/{Ident(name)}\")]\n" +
     }
     private static bool HasAnyArg(JsonElement a, params string[] keys) => keys.Any(k => HasArg(a, k));
     private static string BridgeRoot(string root) => Path.Combine(root, "Library", "XLabMcpBridge");
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
     private static string? InRoot(string root, string p)
     {
         var n = p.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
         var f = Path.GetFullPath(Path.IsPathRooted(n) ? n : Path.Combine(root, n));
         var rr = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         return f.StartsWith(rr, StringComparison.OrdinalIgnoreCase) ? f : null;
+    }
+    private static void CopyDirectory(string sourcePath, string targetPath)
+    {
+        var source = new DirectoryInfo(sourcePath);
+        if (!source.Exists)
+        {
+            throw new DirectoryNotFoundException($"Source directory not found: {sourcePath}");
+        }
+
+        Directory.CreateDirectory(targetPath);
+        foreach (var dir in source.GetDirectories("*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source.FullName, dir.FullName);
+            Directory.CreateDirectory(Path.Combine(targetPath, relative));
+        }
+
+        foreach (var file in source.GetFiles("*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source.FullName, file.FullName);
+            var destination = Path.Combine(targetPath, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            file.CopyTo(destination, overwrite: true);
+        }
+    }
+    private static (bool Success, string? SourcePath, string? TargetPath, string? Error) ResolveUnityMcpPackagePaths(string root, JsonElement a)
+    {
+        var sourceArg = Opt(a, "packageSourcePath");
+        string? sourcePath = null;
+        if (!string.IsNullOrWhiteSpace(sourceArg))
+        {
+            sourcePath = Path.GetFullPath(sourceArg);
+        }
+        else
+        {
+            sourcePath = ResolveUnityMcpPackageSourcePath();
+        }
+
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return (false, null, null, "Unity MCP package source path could not be resolved. Pass packageSourcePath.");
+        }
+
+        var packageJson = Path.Combine(sourcePath, "package.json");
+        if (!Directory.Exists(sourcePath) || !File.Exists(packageJson))
+        {
+            return (false, null, null, $"Unity MCP package source not found: {sourcePath}");
+        }
+
+        var targetPath = Path.Combine(root, "Packages", UnityMcpPackageName);
+        return (true, sourcePath, targetPath, null);
+    }
+    private static string? ResolveUnityMcpPackageSourcePath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "unity", UnityMcpPackageName),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "unity", UnityMcpPackageName),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "unity", UnityMcpPackageName),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "dotnet-prototype", "unity", UnityMcpPackageName),
+            Path.Combine(Directory.GetCurrentDirectory(), "unity", UnityMcpPackageName),
+            Path.Combine(Directory.GetCurrentDirectory(), "dotnet-prototype", "unity", UnityMcpPackageName),
+        };
+
+        foreach (var candidate in candidates.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(Path.Combine(candidate, "package.json")))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+    private static string PackageLifecyclePayload(string action, string projectRoot, string? sourcePath, string targetPath, bool changed)
+    {
+        var packageVersion = "unknown";
+        var versionSource = !string.IsNullOrWhiteSpace(sourcePath) ? Path.Combine(sourcePath, "package.json") : Path.Combine(targetPath, "package.json");
+        if (File.Exists(versionSource))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(versionSource));
+                packageVersion = doc.RootElement.TryGetProperty("version", out var versionValue)
+                    ? versionValue.GetString() ?? "unknown"
+                    : "unknown";
+            }
+            catch
+            {
+                packageVersion = "unknown";
+            }
+        }
+
+        var payload = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_editor",
+            ["action"] = action,
+            ["packageName"] = UnityMcpPackageName,
+            ["packageVersion"] = packageVersion,
+            ["projectRoot"] = projectRoot,
+            ["sourcePath"] = sourcePath,
+            ["targetPath"] = targetPath,
+            ["changed"] = changed,
+            ["installed"] = action != "delete" || Directory.Exists(targetPath),
+            ["message"] = $"manage_editor {action}: {UnityMcpPackageName}"
+        };
+        return payload.ToJsonString();
     }
     private static string Ident(string x)
     {

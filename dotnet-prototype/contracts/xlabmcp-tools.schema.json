@@ -209,9 +209,10 @@
     "manage_editor": {
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["play_mode", "status", "compile_status"] },
+        "action": { "type": "string", "enum": ["play_mode", "status", "compile_status", "install", "update", "delete"] },
         "mode": { "type": "string" },
-        "waitMs": { "type": "integer" }
+        "waitMs": { "type": "integer" },
+        "packageSourcePath": { "type": "string" }
       },
       "additionalProperties": true
     },
