@@ -50,6 +50,12 @@ namespace XLab.UnityMcp.Editor
         public int FrameEnd { get; init; }
     }
 
+    private sealed class RiskFileEntry
+    {
+        public string Path { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+    }
+
     static McpBridgeProcessor()
     {
         Application.logMessageReceived += OnLog;
@@ -1286,7 +1292,7 @@ namespace XLab.UnityMcp.Editor
         AddCapability(capabilities, "manage_asset", "write_text_file", true, "Controlled diagnostics text write is supported.");
         AddCapability(capabilities, "manage_asset", "list_localization_keys", true, "Localization key discovery is supported.");
         AddCapability(capabilities, "manage_asset", "resolve_localization_keys", true, "Localization key resolution is supported.");
-        AddCapability(capabilities, "manage_asset", "classify_risk", false, "Policy classifier is not implemented yet.");
+        AddCapability(capabilities, "manage_asset", "classify_risk", true, "Deterministic change-risk classification is supported.");
 
         AddCapability(capabilities, "manage_hierarchy", "list", true, "Scene root enumeration is supported.");
         AddCapability(capabilities, "manage_hierarchy", "find", true, "Name-based hierarchy search is supported.");
@@ -1307,7 +1313,7 @@ namespace XLab.UnityMcp.Editor
 
         AddCapability(capabilities, "manage_script", "create_or_edit", true, "Script create/edit is supported.");
         AddCapability(capabilities, "manage_scriptableobject", "create_or_edit", true, "ScriptableObject create/edit is supported.");
-        AddCapability(capabilities, "manage_scriptableobject", "validate_schema", false, "Schema validation is planned.");
+        AddCapability(capabilities, "manage_scriptableobject", "validate_schema", true, "Source schema validation is supported.");
 
         AddCapability(capabilities, "manage_prefabs", "create", true, "Prefab creation is supported.");
         AddCapability(capabilities, "manage_prefabs", "open", true, "Prefab open is supported.");
@@ -1324,9 +1330,9 @@ namespace XLab.UnityMcp.Editor
 
         AddCapability(capabilities, "manage_localization", "key_add", true, "Localization key append is supported.");
         AddCapability(capabilities, "manage_localization", "tables", true, "Localization table snapshot is supported.");
-        AddCapability(capabilities, "manage_localization", "validate_assets", false, "Localization asset validation is planned.");
-        AddCapability(capabilities, "manage_localization", "validate_key_coverage", false, "Localization coverage validation is planned.");
-        AddCapability(capabilities, "manage_localization", "validate_fallback_language", false, "Fallback language validation is planned.");
+        AddCapability(capabilities, "manage_localization", "validate_assets", true, "Localization asset validation is supported.");
+        AddCapability(capabilities, "manage_localization", "validate_key_coverage", true, "Localization key coverage validation is supported.");
+        AddCapability(capabilities, "manage_localization", "validate_fallback_language", true, "Fallback language validation is supported.");
 
         AddCapability(capabilities, "manage_editor", "play_mode", true, "Play mode enter/exit/status is supported.");
         AddCapability(capabilities, "manage_editor", "status", true, "Editor status is supported.");
@@ -1337,7 +1343,7 @@ namespace XLab.UnityMcp.Editor
         AddCapability(capabilities, "manage_camera", "screenshot", true, "Screen capture is supported.");
 
         AddCapability(capabilities, "manage_graphics", "set_quality_level", true, "Quality level switching is supported.");
-        AddCapability(capabilities, "manage_graphics", "validate_profile_assignment", false, "Profile assignment validation is planned.");
+        AddCapability(capabilities, "manage_graphics", "validate_profile_assignment", true, "Current quality profile assignment validation is supported.");
 
         AddCapability(capabilities, "manage_profiler", "get_counters", true, "Profiler counters are supported.");
         AddCapability(capabilities, "manage_profiler", "get_frame_timing", true, "Frame timing sampling is supported.");
@@ -1443,6 +1449,7 @@ namespace XLab.UnityMcp.Editor
             "write_text_file" => AssetWriteTextFile(raw),
             "list_localization_keys" => LocalizationKeyList(raw),
             "resolve_localization_keys" => LocalizationKeyResolve(raw),
+            "classify_risk" => RiskClassify(raw),
             _ => (false, $"Unsupported manage_asset action: {action}")
         };
     }
@@ -1522,9 +1529,12 @@ namespace XLab.UnityMcp.Editor
     private static (bool, string) ManageScriptableObject(string raw)
     {
         var action = (JsonArgumentString(raw, "action") ?? "create_or_edit").ToLowerInvariant();
-        return action == "create_or_edit"
-            ? ScriptableObjectCreateOrEdit(raw)
-            : (false, $"Unsupported manage_scriptableobject action: {action}");
+        return action switch
+        {
+            "create_or_edit" => ScriptableObjectCreateOrEdit(raw),
+            "validate_schema" => ScriptableObjectValidateSchema(raw),
+            _ => (false, $"Unsupported manage_scriptableobject action: {action}")
+        };
     }
 
     private static (bool, string) ManageEditor(string raw)
@@ -1731,6 +1741,9 @@ namespace XLab.UnityMcp.Editor
         {
             "key_add" => LocalizationKeyAdd(raw),
             "tables" => LocalizationTables(raw),
+            "validate_assets" => LocalizationValidateAssets(raw),
+            "validate_key_coverage" => LocalizationValidateKeyCoverage(raw),
+            "validate_fallback_language" => LocalizationValidateFallbackLanguage(raw),
             _ => (false, $"Unsupported manage_localization action: {action}")
         };
     }
@@ -1738,6 +1751,11 @@ namespace XLab.UnityMcp.Editor
     private static (bool, string) ManageGraphics(string raw)
     {
         var action = (JsonArgumentString(raw, "action") ?? "set_quality_level").ToLowerInvariant();
+        if (action == "validate_profile_assignment")
+        {
+            return GraphicsValidateProfileAssignment(raw);
+        }
+
         if (action != "set_quality_level")
         {
             return (false, $"Unsupported manage_graphics action: {action}");
@@ -1763,6 +1781,89 @@ namespace XLab.UnityMcp.Editor
                              ?? true;
         QualitySettings.SetQualityLevel(index, applyExpensive);
         return (true, $"manage_graphics: active_quality_level={QualitySettings.names[QualitySettings.GetQualityLevel()]}; index={index}; applied={applyExpensive}");
+    }
+
+    private static (bool, string) GraphicsValidateProfileAssignment(string raw)
+    {
+        var names = QualitySettings.names ?? Array.Empty<string>();
+        var activeIndex = QualitySettings.GetQualityLevel();
+        var findings = new JsonArray();
+        var profiles = new JsonArray();
+        var errors = 0;
+        var warnings = 0;
+
+        if (names.Length == 0)
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "no_quality_profiles",
+                ["message"] = "No quality levels are configured"
+            });
+        }
+
+        for (var i = 0; i < names.Length; i++)
+        {
+            var profileName = names[i];
+            var active = i == activeIndex;
+            profiles.Add(new JsonObject
+            {
+                ["index"] = i,
+                ["name"] = profileName,
+                ["active"] = active
+            });
+
+            if (string.IsNullOrWhiteSpace(profileName))
+            {
+                warnings++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "warning",
+                    ["issue"] = "unnamed_quality_profile",
+                    ["index"] = i,
+                    ["message"] = "Quality level name is empty"
+                });
+            }
+        }
+
+        if (activeIndex < 0 || activeIndex >= names.Length)
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "active_quality_index_out_of_range",
+                ["activeIndex"] = activeIndex,
+                ["message"] = "Active quality index is outside the configured range"
+            });
+        }
+
+        var activeName = activeIndex >= 0 && activeIndex < names.Length ? names[activeIndex] : string.Empty;
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_graphics",
+            ["action"] = "validate_profile_assignment",
+            ["buildTarget"] = EditorUserBuildSettings.activeBuildTarget.ToString(),
+            ["activeQualityLevel"] = activeName,
+            ["activeQualityIndex"] = activeIndex,
+            ["summary"] = new JsonObject
+            {
+                ["qualityProfiles"] = names.Length,
+                ["errors"] = errors,
+                ["warnings"] = warnings
+            },
+            ["profiles"] = profiles,
+            ["findings"] = findings
+        };
+        report["recommendation"] = errors > 0
+            ? "Fix quality profile assignment before release."
+            : warnings > 0
+                ? "Review unnamed profiles and clean up quality settings."
+                : "Quality profile assignment looks healthy.";
+
+        return (true, report.ToJsonString());
     }
 
     private static (bool, string) ManageProfiler(string raw)
@@ -3144,6 +3245,261 @@ namespace XLab.UnityMcp.Editor
         return (true, report.ToJsonString());
     }
 
+    private static (bool, string) LocalizationValidateAssets(string raw)
+    {
+        var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var scopeRoot = ResolveLocalizationScopeRoot(projectRoot, raw);
+        var tableFilter = JsonArgumentString(raw, "table") ?? JsonArgumentString(raw, "tableName");
+        var csvFiles = CollectLocalizationCsvFiles(scopeRoot, tableFilter);
+        var findings = new JsonArray();
+        var tables = new JsonArray();
+        var errors = 0;
+        var warnings = 0;
+        var totalEntries = 0;
+
+        foreach (var csv in csvFiles)
+        {
+            try
+            {
+                var table = ReadLocalizationCsvTable(csv, projectRoot);
+                var tableFindings = ValidateLocalizationCsvTable(csv, table, out var tableErrors, out var tableWarnings);
+                errors += tableErrors;
+                warnings += tableWarnings;
+                totalEntries += table.Keys.Count;
+
+                tables.Add(new JsonObject
+                {
+                    ["name"] = table.Name,
+                    ["path"] = table.RelativePath,
+                    ["entryCount"] = table.Keys.Count,
+                    ["locales"] = new JsonArray(table.Locales.Select(x => (JsonNode?)x).ToArray()),
+                    ["missingCounts"] = BuildCountObject(table.MissingCounts),
+                    ["findings"] = tableFindings
+                });
+                foreach (var finding in tableFindings)
+                {
+                    findings.Add(finding);
+                }
+            }
+            catch (Exception ex)
+            {
+                errors++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "error",
+                    ["issue"] = "localization_table_unreadable",
+                    ["path"] = RelativeProjectPath(projectRoot, csv),
+                    ["message"] = ex.Message
+                });
+                tables.Add(new JsonObject
+                {
+                    ["name"] = Path.GetFileNameWithoutExtension(csv),
+                    ["path"] = RelativeProjectPath(projectRoot, csv),
+                    ["error"] = ex.Message
+                });
+            }
+        }
+
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_localization",
+            ["action"] = "validate_assets",
+            ["scopeRoot"] = scopeRoot,
+            ["tableFilter"] = tableFilter,
+            ["summary"] = new JsonObject
+            {
+                ["tables"] = tables.Count,
+                ["entries"] = totalEntries,
+                ["errors"] = errors,
+                ["warnings"] = warnings
+            },
+            ["tables"] = tables,
+            ["findings"] = findings
+        };
+        report["recommendation"] = errors > 0
+            ? "Fix localization asset errors before release."
+            : warnings > 0
+                ? "Review warnings and fill missing rows where needed."
+                : "Localization assets look healthy.";
+
+        return (true, report.ToJsonString());
+    }
+
+    private static (bool, string) LocalizationValidateKeyCoverage(string raw)
+    {
+        var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var scopeRoot = ResolveLocalizationScopeRoot(projectRoot, raw);
+        var tableFilter = JsonArgumentString(raw, "table") ?? JsonArgumentString(raw, "tableName");
+        var csvFiles = CollectLocalizationCsvFiles(scopeRoot, tableFilter);
+        var findings = new JsonArray();
+        var tables = new JsonArray();
+        var missingEntries = 0;
+        var totalKeys = 0;
+        var locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var csv in csvFiles)
+        {
+            try
+            {
+                var table = ReadLocalizationCsvTable(csv, projectRoot);
+                var coverage = new JsonArray();
+                foreach (var locale in table.Locales)
+                {
+                    locales.Add(locale);
+                    table.EntriesByLocale.TryGetValue(locale, out var localeEntries);
+                    localeEntries ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    var missingKeys = table.Keys
+                        .Where(key => !localeEntries.ContainsKey(key))
+                        .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                        .Take(50)
+                        .ToList();
+
+                    if (missingKeys.Count > 0)
+                    {
+                        missingEntries += missingKeys.Count;
+                        findings.Add(new JsonObject
+                        {
+                            ["severity"] = "warning",
+                            ["issue"] = "missing_localization_keys",
+                            ["path"] = table.RelativePath,
+                            ["locale"] = locale,
+                            ["missingCount"] = missingKeys.Count,
+                            ["missingKeys"] = new JsonArray(missingKeys.Select(k => (JsonNode?)k).ToArray()),
+                            ["message"] = "Locale is missing keys present in the table"
+                        });
+                    }
+
+                    coverage.Add(new JsonObject
+                    {
+                        ["locale"] = locale,
+                        ["missingCount"] = missingKeys.Count,
+                        ["missingKeys"] = new JsonArray(missingKeys.Select(k => (JsonNode?)k).ToArray())
+                    });
+                }
+
+                totalKeys += table.Keys.Count;
+                tables.Add(new JsonObject
+                {
+                    ["name"] = table.Name,
+                    ["path"] = table.RelativePath,
+                    ["entryCount"] = table.Keys.Count,
+                    ["coverage"] = coverage
+                });
+            }
+            catch (Exception ex)
+            {
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "error",
+                    ["issue"] = "localization_table_unreadable",
+                    ["path"] = RelativeProjectPath(projectRoot, csv),
+                    ["message"] = ex.Message
+                });
+            }
+        }
+
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_localization",
+            ["action"] = "validate_key_coverage",
+            ["scopeRoot"] = scopeRoot,
+            ["tableFilter"] = tableFilter,
+            ["summary"] = new JsonObject
+            {
+                ["tables"] = tables.Count,
+                ["locales"] = locales.Count,
+                ["keys"] = totalKeys,
+                ["missingEntries"] = missingEntries
+            },
+            ["tables"] = tables,
+            ["findings"] = findings
+        };
+        report["coverage"] = missingEntries == 0 ? "complete" : "partial";
+        report["recommendation"] = missingEntries > 0
+            ? "Fill missing localized values for every locale."
+            : "Key coverage is complete for the selected scope.";
+
+        return (true, report.ToJsonString());
+    }
+
+    private static (bool, string) LocalizationValidateFallbackLanguage(string raw)
+    {
+        var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var scopeRoot = ResolveLocalizationScopeRoot(projectRoot, raw);
+        var tableFilter = JsonArgumentString(raw, "table") ?? JsonArgumentString(raw, "tableName");
+        var csvFiles = CollectLocalizationCsvFiles(scopeRoot, tableFilter);
+        var findings = new JsonArray();
+        var tables = new JsonArray();
+        var missingFallback = 0;
+        var fallbackLocale = (JsonArgumentString(raw, "fallbackLocale") ?? JsonArgumentString(raw, "locale") ?? "default").Trim();
+
+        foreach (var csv in csvFiles)
+        {
+            try
+            {
+                var table = ReadLocalizationCsvTable(csv, projectRoot);
+                var hasFallback = table.Locales.Any(l => string.Equals(l, fallbackLocale, StringComparison.OrdinalIgnoreCase));
+                var missingCount = table.MissingCounts.TryGetValue(fallbackLocale, out var fallbackMissing) ? fallbackMissing : table.Keys.Count;
+                if (!hasFallback || missingCount > 0)
+                {
+                    missingFallback++;
+                    findings.Add(new JsonObject
+                    {
+                        ["severity"] = hasFallback ? "warning" : "error",
+                        ["issue"] = hasFallback ? "missing_fallback_values" : "missing_fallback_locale",
+                        ["path"] = table.RelativePath,
+                        ["fallbackLocale"] = fallbackLocale,
+                        ["missingCount"] = missingCount,
+                        ["message"] = hasFallback ? "Fallback locale contains gaps" : "Fallback locale column is missing"
+                    });
+                }
+
+                tables.Add(new JsonObject
+                {
+                    ["name"] = table.Name,
+                    ["path"] = table.RelativePath,
+                    ["fallbackLocale"] = fallbackLocale,
+                    ["hasFallbackLocale"] = hasFallback,
+                    ["missingCount"] = missingCount
+                });
+            }
+            catch (Exception ex)
+            {
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "error",
+                    ["issue"] = "localization_table_unreadable",
+                    ["path"] = RelativeProjectPath(projectRoot, csv),
+                    ["message"] = ex.Message
+                });
+            }
+        }
+
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_localization",
+            ["action"] = "validate_fallback_language",
+            ["scopeRoot"] = scopeRoot,
+            ["tableFilter"] = tableFilter,
+            ["fallbackLocale"] = fallbackLocale,
+            ["summary"] = new JsonObject
+            {
+                ["tables"] = tables.Count,
+                ["tablesWithFallbackProblems"] = missingFallback
+            },
+            ["tables"] = tables,
+            ["findings"] = findings
+        };
+        report["recommendation"] = missingFallback > 0
+            ? "Populate the fallback locale for every localization table."
+            : "Fallback language coverage looks healthy.";
+
+        return (true, report.ToJsonString());
+    }
+
     private static JsonObject BuildLocalizationTableSnapshot(string csvPath, HashSet<string> localeSet, out int entryCount, out JsonObject localeMissingCounts)
     {
         var table = ReadLocalizationCsvTable(csvPath, Path.GetFullPath(Path.Combine(Application.dataPath, "..")));
@@ -3366,6 +3722,133 @@ namespace XLab.UnityMcp.Editor
         return value;
     }
 
+    private static JsonObject BuildCountObject(Dictionary<string, int> counts)
+    {
+        var obj = new JsonObject();
+        foreach (var kv in counts.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            obj[kv.Key] = kv.Value;
+        }
+
+        return obj;
+    }
+
+    private static JsonArray ValidateLocalizationCsvTable(string csvPath, LocalizationTableData table, out int errors, out int warnings)
+    {
+        var findings = new JsonArray();
+        errors = 0;
+        warnings = 0;
+
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(csvPath);
+        }
+        catch (Exception ex)
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "localization_table_unreadable",
+                ["path"] = table.RelativePath,
+                ["message"] = ex.Message
+            });
+            return findings;
+        }
+
+        if (lines.Length == 0)
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "empty_localization_table",
+                ["path"] = table.RelativePath,
+                ["message"] = "Localization table is empty"
+            });
+            return findings;
+        }
+
+        var header = SplitCsvLine(lines[0]);
+        if (header.Length < 2)
+        {
+            warnings++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "warning",
+                ["issue"] = "missing_locale_columns",
+                ["path"] = table.RelativePath,
+                ["message"] = "Table header does not define locale columns"
+            });
+        }
+
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in lines.Skip(1))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            var row = SplitCsvLine(line);
+            var key = row.Length > 0 ? row[0].Trim() : string.Empty;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                errors++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "error",
+                    ["issue"] = "blank_localization_key",
+                    ["path"] = table.RelativePath,
+                    ["message"] = "Localization row is missing a key"
+                });
+                continue;
+            }
+
+            if (!seenKeys.Add(key))
+            {
+                warnings++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "warning",
+                    ["issue"] = "duplicate_localization_key",
+                    ["path"] = table.RelativePath,
+                    ["key"] = key,
+                    ["message"] = "Duplicate localization key found"
+                });
+            }
+
+            if (row.Length < header.Length)
+            {
+                warnings++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "warning",
+                    ["issue"] = "truncated_localization_row",
+                    ["path"] = table.RelativePath,
+                    ["key"] = key,
+                    ["missingColumns"] = header.Length - row.Length,
+                    ["message"] = "Row has fewer columns than the header"
+                });
+            }
+        }
+
+        if (table.Keys.Count == 0)
+        {
+            warnings++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "warning",
+                ["issue"] = "empty_localization_keys",
+                ["path"] = table.RelativePath,
+                ["message"] = "Localization table has no keys"
+            });
+        }
+
+        return findings;
+    }
+
     private static (bool, string) ScriptableObjectCreateOrEdit(string raw)
     {
         var name = JsonArgumentString(raw, "name") ?? JsonArgumentString(raw, "scriptName") ?? "GameDataConfig";
@@ -3399,6 +3882,142 @@ namespace XLab.UnityMcp.Editor
 
         AssetDatabase.Refresh();
         return (true, $"manage_scriptableobject create_or_edit: {relativePath}");
+    }
+
+    private static (bool, string) ScriptableObjectValidateSchema(string raw)
+    {
+        var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var path = ResolveScriptableObjectSourcePath(root, raw);
+        if (path == null)
+        {
+            return (false, "path or name is required");
+        }
+
+        if (!File.Exists(path))
+        {
+            return (false, $"ScriptableObject source not found: {RelativeProjectPath(root, path)}");
+        }
+
+        var text = File.ReadAllText(path);
+        var findings = new JsonArray();
+        var errors = 0;
+        var warnings = 0;
+
+        if (!Regex.IsMatch(text, @"\b:\s*ScriptableObject\b"))
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "missing_scriptableobject_base",
+                ["path"] = RelativeProjectPath(root, path),
+                ["message"] = "Class must inherit from ScriptableObject"
+            });
+        }
+
+        if (!text.Contains("[CreateAssetMenu", StringComparison.Ordinal))
+        {
+            warnings++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "warning",
+                ["issue"] = "missing_create_asset_menu",
+                ["path"] = RelativeProjectPath(root, path),
+                ["message"] = "CreateAssetMenu attribute is recommended for authoring"
+            });
+        }
+
+        var classMatch = Regex.Match(text, @"\bclass\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\b");
+        if (!classMatch.Success)
+        {
+            errors++;
+            findings.Add(new JsonObject
+            {
+                ["severity"] = "error",
+                ["issue"] = "missing_class_declaration",
+                ["path"] = RelativeProjectPath(root, path),
+                ["message"] = "No class declaration found"
+            });
+        }
+        else
+        {
+            var className = classMatch.Groups["name"].Value;
+            var fileName = Path.GetFileNameWithoutExtension(path);
+            if (!string.Equals(className, fileName, StringComparison.Ordinal))
+            {
+                warnings++;
+                findings.Add(new JsonObject
+                {
+                    ["severity"] = "warning",
+                    ["issue"] = "class_name_mismatch",
+                    ["path"] = RelativeProjectPath(root, path),
+                    ["className"] = className,
+                    ["fileName"] = fileName,
+                    ["message"] = "Class name does not match file name"
+                });
+            }
+        }
+
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_scriptableobject",
+            ["action"] = "validate_schema",
+            ["path"] = RelativeProjectPath(root, path),
+            ["valid"] = errors == 0,
+            ["summary"] = new JsonObject
+            {
+                ["errors"] = errors,
+                ["warnings"] = warnings
+            },
+            ["findings"] = findings
+        };
+
+        report["recommendation"] = errors > 0
+            ? "Fix schema errors before using this ScriptableObject in content workflows."
+            : warnings > 0
+                ? "Review warnings for consistency, then proceed."
+                : "Schema looks healthy.";
+
+        return (true, report.ToJsonString());
+    }
+
+    private static string? ResolveScriptableObjectSourcePath(string root, string raw)
+    {
+        var relPath = JsonArgumentString(raw, "path") ?? JsonArgumentString(raw, "scriptPath");
+        if (!string.IsNullOrWhiteSpace(relPath))
+        {
+            relPath = relPath.Replace("\\", "/");
+            if (!relPath.StartsWith("Assets/", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return Path.Combine(root, relPath);
+        }
+
+        var name = JsonArgumentString(raw, "name") ?? JsonArgumentString(raw, "scriptName");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        var safeName = Regex.Replace(name, @"[^A-Za-z0-9_]", "_");
+        var candidates = new[]
+        {
+            Path.Combine(root, "Assets", "Scripts", $"{safeName}.cs"),
+            Path.Combine(root, "Assets", $"{safeName}.cs")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return candidates[0];
     }
 
     private static (bool, string) ScriptCreateOrEdit(string raw)
@@ -3618,9 +4237,41 @@ namespace XLab.UnityMcp.Editor
     private static (bool, string) ChangeSummary(string raw)
     {
         var listed = AssetListModified(raw).Item2;
-        var lines = listed.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-        var count = Math.Max(0, lines.Length - 1);
-        return (true, $"manage_asset change_summary: modifiedAssets={count}");
+        var entries = ParseListedAssets(listed);
+        var report = new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_asset",
+            ["action"] = "change_summary",
+            ["summary"] = new JsonObject
+            {
+                ["modifiedAssets"] = entries.Count
+            },
+            ["changes"] = new JsonArray(entries.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase).Select(e => new JsonObject
+            {
+                ["path"] = e.Path,
+                ["status"] = e.Status
+            }).ToArray())
+        };
+        report["source"] = "list_modified";
+        return (true, report.ToJsonString());
+    }
+
+    private static (bool, string) RiskClassify(string raw)
+    {
+        var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        if (!Directory.Exists(root))
+        {
+            return (false, "project root not found");
+        }
+
+        var gitChanges = ReadGitChanges(root);
+        var entries = gitChanges.Count > 0
+            ? gitChanges
+            : ParseListedAssets(AssetListModified(raw).Item2);
+
+        var report = BuildRiskReport(root, entries, gitChanges.Count > 0 ? "git status --short" : "list_modified fallback");
+        return (true, report.ToJsonString());
     }
 
     private static (bool, string) ProjectDocsUpdate(string raw)
@@ -3646,6 +4297,227 @@ namespace XLab.UnityMcp.Editor
         }
         AssetDatabase.Refresh();
         return (true, $"manage_asset docs_update: {normalized}");
+    }
+
+    private static List<RiskFileEntry> ReadGitChanges(string root)
+    {
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo("git", "status --short --untracked-files=all")
+            {
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process == null)
+            {
+                return new List<RiskFileEntry>();
+            }
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                if (!string.IsNullOrWhiteSpace(stderr))
+                {
+                    Debug.LogWarning($"MCP git status failed: {stderr.Trim()}");
+                }
+                return new List<RiskFileEntry>();
+            }
+
+            return ParseGitStatus(stdout);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"MCP git status unavailable: {ex.Message}");
+            return new List<RiskFileEntry>();
+        }
+    }
+
+    private static List<RiskFileEntry> ParseGitStatus(string output)
+    {
+        var entries = new List<RiskFileEntry>();
+        foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.Length < 3)
+            {
+                continue;
+            }
+
+            var status = line.Substring(0, 2).Trim();
+            var path = line.Substring(3).Trim();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            var renameSep = path.IndexOf(" -> ", StringComparison.Ordinal);
+            if (renameSep >= 0)
+            {
+                path = path.Substring(renameSep + 4);
+            }
+
+            entries.Add(new RiskFileEntry
+            {
+                Path = path.Replace("\\", "/"),
+                Status = status
+            });
+        }
+
+        return entries;
+    }
+
+    private static List<RiskFileEntry> ParseListedAssets(string output)
+    {
+        var entries = new List<RiskFileEntry>();
+        var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines.Skip(1))
+        {
+            var path = line.Trim();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            entries.Add(new RiskFileEntry
+            {
+                Path = path.Replace("\\", "/"),
+                Status = "modified"
+            });
+        }
+
+        return entries;
+    }
+
+    private static JsonObject BuildRiskReport(string root, List<RiskFileEntry> entries, string source)
+    {
+        var findings = new JsonArray();
+        var high = 0;
+        var medium = 0;
+        var low = 0;
+
+        foreach (var entry in entries.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            var (risk, reason, category) = ClassifyRiskEntry(entry.Path);
+            switch (risk)
+            {
+                case "high":
+                    high++;
+                    break;
+                case "medium":
+                    medium++;
+                    break;
+                default:
+                    low++;
+                    break;
+            }
+
+            findings.Add(new JsonObject
+            {
+                ["path"] = entry.Path,
+                ["status"] = entry.Status,
+                ["risk"] = risk,
+                ["category"] = category,
+                ["reason"] = reason
+            });
+        }
+
+        var overall = high > 0 ? "high" : medium > 0 ? "medium" : "low";
+        var recommendation = overall switch
+        {
+            "high" => "Review before merging. Runtime code, scenes, prefabs, or project settings changed.",
+            "medium" => "Review the data and content impact before merging.",
+            _ => "Low-risk change set. Review for documentation or small content edits only."
+        };
+
+        return new JsonObject
+        {
+            ["success"] = true,
+            ["tool"] = "manage_asset",
+            ["action"] = "classify_risk",
+            ["projectRoot"] = root,
+            ["source"] = source,
+            ["overallRisk"] = overall,
+            ["summary"] = new JsonObject
+            {
+                ["total"] = entries.Count,
+                ["high"] = high,
+                ["medium"] = medium,
+                ["low"] = low
+            },
+            ["recommendation"] = recommendation,
+            ["changes"] = findings
+        };
+    }
+
+    private static (string Risk, string Reason, string Category) ClassifyRiskEntry(string path)
+    {
+        var normalized = path.Replace("\\", "/").TrimStart('/');
+        var lower = normalized.ToLowerInvariant();
+
+        if (lower.StartsWith("docs/", StringComparison.Ordinal) || lower.StartsWith("mcp/", StringComparison.Ordinal))
+        {
+            return ("low", "documentation or workflow asset", "docs");
+        }
+
+        if (lower.EndsWith(".md", StringComparison.Ordinal) || lower.EndsWith(".txt", StringComparison.Ordinal) || lower.EndsWith(".rst", StringComparison.Ordinal))
+        {
+            return ("low", "documentation or note file", "docs");
+        }
+
+        if (lower.StartsWith("projectsettings/", StringComparison.Ordinal)
+            || lower.StartsWith("packages/manifest.json", StringComparison.Ordinal)
+            || lower.StartsWith("packages/packages-lock.json", StringComparison.Ordinal))
+        {
+            return ("high", "project configuration or package manifest", "project");
+        }
+
+        if (lower.IndexOf("/editor/", StringComparison.Ordinal) >= 0 || lower.StartsWith("assets/editor/", StringComparison.Ordinal))
+        {
+            if (lower.EndsWith(".cs", StringComparison.Ordinal) || lower.EndsWith(".asmdef", StringComparison.Ordinal))
+            {
+                return ("high", "editor runtime code", "code");
+            }
+        }
+
+        if (lower.EndsWith(".cs", StringComparison.Ordinal)
+            || lower.EndsWith(".asmdef", StringComparison.Ordinal)
+            || lower.EndsWith(".unity", StringComparison.Ordinal)
+            || lower.EndsWith(".prefab", StringComparison.Ordinal)
+            || lower.EndsWith(".anim", StringComparison.Ordinal)
+            || lower.EndsWith(".controller", StringComparison.Ordinal)
+            || lower.EndsWith(".overridecontroller", StringComparison.Ordinal))
+        {
+            return ("high", "runtime code or scene content", "runtime");
+        }
+
+        if (lower.EndsWith(".shader", StringComparison.Ordinal)
+            || lower.EndsWith(".compute", StringComparison.Ordinal)
+            || lower.EndsWith(".cginc", StringComparison.Ordinal)
+            || lower.EndsWith(".uxml", StringComparison.Ordinal)
+            || lower.EndsWith(".uss", StringComparison.Ordinal)
+            || lower.EndsWith(".asset", StringComparison.Ordinal)
+            || lower.EndsWith(".json", StringComparison.Ordinal)
+            || lower.EndsWith(".csv", StringComparison.Ordinal)
+            || lower.EndsWith(".xml", StringComparison.Ordinal)
+            || lower.EndsWith(".yml", StringComparison.Ordinal)
+            || lower.EndsWith(".yaml", StringComparison.Ordinal)
+            || lower.EndsWith(".mat", StringComparison.Ordinal))
+        {
+            return ("medium", "serialized content or authoring asset", "content");
+        }
+
+        if (lower.EndsWith(".meta", StringComparison.Ordinal))
+        {
+            return ("medium", "asset metadata changed", "content");
+        }
+
+        return ("medium", "general project file", "content");
     }
 
     private static (bool, string) TestsRun(string raw)

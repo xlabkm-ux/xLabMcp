@@ -187,7 +187,8 @@ The server backlog is complete:
 - `XLAB-001` to `XLAB-021` are marked `completed`
 - the active runtime inventory is target-only
 - the bridge includes capability, health, audit, diagnostics, screenshot
-  indexing, localization, build, profiler, and save workflows
+  indexing, localization validation, build, profiler, save, schema
+  validation, quality-profile validation, and change-risk workflows
 
 ## 7. Maintenance Rules
 

@@ -740,9 +740,9 @@ public sealed class DispatcherTests
                 "get_test_job" => "\"jobId\": \"job-123\",",
                 "manage_hierarchy" => "\"action\": \"find\", \"query\": \"Operative\",",
                 "manage_script" => "\"action\": \"create_or_edit\", \"scriptName\": \"MissionStateService\",",
-                "manage_scriptableobject" => "\"action\": \"create_or_edit\", \"name\": \"MissionConfig\",",
+                "manage_scriptableobject" => "\"action\": \"validate_schema\", \"path\": \"Assets/Scripts/MissionConfig.cs\",",
                 "manage_ui" => "\"action\": \"create_or_edit\", \"name\": \"MissionHud\",",
-                "manage_localization" => "\"action\": \"key_add\", \"key\": \"ui.mission.start\",",
+                "manage_localization" => "\"action\": \"validate_assets\", \"path\": \"Assets/Localization\",",
                 _ => ""
             };
 
@@ -904,6 +904,82 @@ public sealed class DispatcherTests
             var result = _dispatcher.HandleToolCall(doc.RootElement);
             Assert.True(result.IsError);
             Assert.Contains("Missing key", result.Content[0].Text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageAssetClassifyRisk_QueuesCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = $$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "classify_risk",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """;
+
+            using var doc = JsonDocument.Parse(json);
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_asset", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageGraphicsValidateProfileAssignment_QueuesCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = $$"""
+            {
+              "params": {
+                "name": "manage_graphics",
+                "arguments": {
+                  "action": "validate_profile_assignment",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """;
+
+            using var doc = JsonDocument.Parse(json);
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_graphics", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
         }
         finally
         {

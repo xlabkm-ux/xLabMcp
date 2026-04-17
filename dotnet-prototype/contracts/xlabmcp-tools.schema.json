@@ -55,6 +55,7 @@
             "refresh",
             "list_modified",
             "change_summary",
+            "classify_risk",
             "docs_update",
             "read_text_file",
             "write_text_file",

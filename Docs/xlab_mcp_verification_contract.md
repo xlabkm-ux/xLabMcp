@@ -310,6 +310,206 @@ Response:
 Same schema as scene validation, with `prefabPath`.
 
 
+### `manage_scriptableobject(action="validate_schema")`
+
+Status: canonical schema validation action on the existing ScriptableObject tool family.
+
+Purpose:
+
+Validate the generated or edited ScriptableObject source for the expected asset-authoring shape.
+
+Request:
+
+```json
+{
+  "action": "validate_schema",
+  "path": "Assets/Scripts/MissionConfig.cs"
+}
+```
+
+Response:
+
+- `success`
+- `path`
+- `valid`
+- `summary.errors`
+- `summary.warnings`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_localization(action="validate_assets")`
+
+Status: canonical localization asset validation action.
+
+Purpose:
+
+Validate localization CSV assets for basic structural issues and unreadable files.
+
+Request:
+
+```json
+{
+  "action": "validate_assets",
+  "path": "Assets/Localization"
+}
+```
+
+Response:
+
+- `success`
+- `scopeRoot`
+- `summary.tables`
+- `summary.entries`
+- `summary.errors`
+- `summary.warnings`
+- `tables[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_localization(action="validate_key_coverage")`
+
+Status: canonical localization coverage action.
+
+Purpose:
+
+Check whether each locale has values for all keys in the selected localization scope.
+
+Request:
+
+```json
+{
+  "action": "validate_key_coverage",
+  "path": "Assets/Localization"
+}
+```
+
+Response:
+
+- `success`
+- `summary.tables`
+- `summary.locales`
+- `summary.keys`
+- `summary.missingEntries`
+- `tables[]`
+- `findings[]`
+- `coverage`
+- `recommendation`
+
+
+### `manage_localization(action="validate_fallback_language")`
+
+Status: canonical fallback-language validation action.
+
+Purpose:
+
+Confirm that the fallback locale exists and is fully populated for the selected scope.
+
+Request:
+
+```json
+{
+  "action": "validate_fallback_language",
+  "path": "Assets/Localization",
+  "fallbackLocale": "default"
+}
+```
+
+Response:
+
+- `success`
+- `fallbackLocale`
+- `summary.tables`
+- `summary.tablesWithFallbackProblems`
+- `tables[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_graphics(action="validate_profile_assignment")`
+
+Status: canonical quality/profile validation action.
+
+Purpose:
+
+Validate the current editor quality profile assignment and report the active quality level.
+
+Request:
+
+```json
+{
+  "action": "validate_profile_assignment"
+}
+```
+
+Response:
+
+- `success`
+- `buildTarget`
+- `activeQualityLevel`
+- `activeQualityIndex`
+- `summary.qualityProfiles`
+- `summary.errors`
+- `summary.warnings`
+- `profiles[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_asset(action="change_summary")`
+
+Status: canonical change-summary action.
+
+Purpose:
+
+Summarize the current change set in a compact, machine-readable form.
+
+Request:
+
+```json
+{
+  "action": "change_summary"
+}
+```
+
+Response:
+
+- `success`
+- `tool`
+- `action`
+- `summary.modifiedAssets`
+- `changes[]`
+- `source`
+
+
+### `manage_asset(action="classify_risk")`
+
+Status: canonical change-risk classification action.
+
+Purpose:
+
+Classify the current change set into low, medium, or high risk and return a deterministic recommendation.
+
+Request:
+
+```json
+{
+  "action": "classify_risk"
+}
+```
+
+Response:
+
+- `success`
+- `tool`
+- `action`
+- `overallRisk`
+- `summary`
+- `changes[]`
+- `recommendation`
+
+
 ## 2. Play mode and scenario control
 
 ### `manage_editor(action="play_mode")`
