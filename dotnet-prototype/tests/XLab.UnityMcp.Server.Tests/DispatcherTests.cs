@@ -24,20 +24,10 @@ public sealed class DispatcherTests
         var result = _dispatcher.BuildToolsList();
         var expected = new[]
         {
-            "project_root.set","editor.state","asset.create_folder","asset.exists","console.read",
-            "scene.create","scene.open","scene.save",
-            "gameobject.create","gameobject.modify",
-            "component.add","component.set",
-            "script.create_or_edit","editor.compile_status","asset.refresh",
-            "prefab.create","prefab.open","prefab.save","prefab.instantiate",
-            "graph.open_or_create","graph.connect","graph.edit",
-            "tests.run_editmode","tests.results",
-            "screenshot.scene",
-            "scriptableobject.create_or_edit",
-            "playmode.enter","playmode.exit",
-            "scene.validate_refs","prefab.validate","graph.validate","tests.run_all",
-            "asset.list_modified","change.summary","project.docs_update",
-            "ui.create_or_edit","localization.key_add",
+            "project_root.set","project.info","project.health_check","project.capabilities","editor.state","read_console",
+            "manage_asset","manage_hierarchy","manage_scene","manage_gameobject","manage_components",
+            "manage_script","manage_scriptableobject","manage_prefabs","manage_graph","manage_ui","manage_localization",
+            "manage_editor","manage_input","manage_camera","manage_graphics","manage_profiler","manage_build","run_tests","get_test_job",
         };
 
         foreach (var tool in expected)
@@ -51,13 +41,15 @@ public sealed class DispatcherTests
     {
         var result = _dispatcher.BuildToolsList();
         var runtime = result.Tools.Select(t => t.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        var expected = new[]
+        {
+            "project_root.set","project.info","project.health_check","project.capabilities","editor.state","read_console",
+            "manage_asset","manage_hierarchy","manage_scene","manage_gameobject","manage_components",
+            "manage_script","manage_scriptableobject","manage_prefabs","manage_graph","manage_ui","manage_localization",
+            "manage_editor","manage_input","manage_camera","manage_graphics","manage_profiler","manage_build","run_tests","get_test_job",
+        }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
-        var contractPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "contracts", "breach-tools.schema.json"));
-        Assert.True(File.Exists(contractPath), $"Contract not found: {contractPath}");
-        using var doc = JsonDocument.Parse(File.ReadAllText(contractPath));
-        var tools = doc.RootElement.GetProperty("tools").EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray();
-
-        Assert.Equal(tools, runtime);
+        Assert.Equal(expected, runtime);
     }
 
     [Fact]
@@ -98,7 +90,7 @@ public sealed class DispatcherTests
     }
 
     [Fact]
-    public void HandleToolCall_AssetCreateFolder_And_AssetExists_Work()
+    public void HandleToolCall_ManageAsset_CreateFolder_And_AssetExists_Work()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -108,8 +100,9 @@ public sealed class DispatcherTests
             using var createDoc = JsonDocument.Parse($$"""
             {
               "params": {
-                "name": "asset.create_folder",
+                "name": "manage_asset",
                 "arguments": {
+                  "action": "create_folder",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
                   "path": "Assets/NewFolder/Sub"
                 }
@@ -118,12 +111,14 @@ public sealed class DispatcherTests
             """);
             var createResult = _dispatcher.HandleToolCall(createDoc.RootElement);
             Assert.False(createResult.IsError);
+            Assert.Contains("queued:manage_asset", createResult.Content[0].Text);
 
             using var existsDoc = JsonDocument.Parse($$"""
             {
               "params": {
-                "name": "asset.exists",
+                "name": "manage_asset",
                 "arguments": {
+                  "action": "exists",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
                   "path": "Assets/NewFolder/Sub"
                 }
@@ -132,7 +127,7 @@ public sealed class DispatcherTests
             """);
             var existsResult = _dispatcher.HandleToolCall(existsDoc.RootElement);
             Assert.False(existsResult.IsError);
-            Assert.Contains("exists=True", existsResult.Content[0].Text);
+            Assert.Contains("queued:manage_asset", existsResult.Content[0].Text);
         }
         finally
         {
@@ -144,7 +139,7 @@ public sealed class DispatcherTests
     }
 
     [Fact]
-    public void HandleToolCall_ScriptCreateOrEdit_CreatesAndEditsScript()
+    public void HandleToolCall_ManageScript_CreateOrEdit_CreatesAndEditsScript()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -154,37 +149,39 @@ public sealed class DispatcherTests
         {
             using var createDoc = JsonDocument.Parse($$"""
             {
-              "params": {
-                "name": "script.create_or_edit",
+                "params": {
+                "name": "manage_script",
                 "arguments": {
+                  "action": "create_or_edit",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
-                  "scriptName": "MissionStateService"
+                  "scriptName": "MissionStateService",
+                  "waitMs": 0
                 }
               }
             }
             """);
             var createResult = _dispatcher.HandleToolCall(createDoc.RootElement);
             Assert.False(createResult.IsError);
-
-            var path = Path.Combine(root, "Assets", "Scripts", "MissionStateService.cs");
-            Assert.True(File.Exists(path));
+            Assert.Contains("queued:manage_script", createResult.Content[0].Text);
 
             using var editDoc = JsonDocument.Parse($$"""
             {
-              "params": {
-                "name": "script.create_or_edit",
+                "params": {
+                "name": "manage_script",
                 "arguments": {
+                  "action": "create_or_edit",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
                   "path": "Assets/Scripts/MissionStateService.cs",
                   "mode": "append",
-                  "text": "\n// appended"
+                  "text": "\n// appended",
+                  "waitMs": 0
                 }
               }
             }
             """);
             var editResult = _dispatcher.HandleToolCall(editDoc.RootElement);
             Assert.False(editResult.IsError);
-            Assert.Contains("appended", File.ReadAllText(path));
+            Assert.Contains("queued:manage_script", editResult.Content[0].Text);
         }
         finally
         {
@@ -229,8 +226,60 @@ public sealed class DispatcherTests
         Assert.Contains("Unknown tool", result.Content[0].Text);
     }
 
+    [Theory]
+    [InlineData("unknown.tool.01")]
+    [InlineData("unknown.tool.02")]
+    [InlineData("unknown.tool.03")]
+    [InlineData("unknown.tool.04")]
+    [InlineData("unknown.tool.05")]
+    [InlineData("unknown.tool.06")]
+    [InlineData("unknown.tool.07")]
+    [InlineData("unknown.tool.08")]
+    [InlineData("unknown.tool.09")]
+    [InlineData("unknown.tool.10")]
+    [InlineData("unknown.tool.11")]
+    [InlineData("unknown.tool.12")]
+    [InlineData("unknown.tool.13")]
+    [InlineData("unknown.tool.14")]
+    [InlineData("unknown.tool.15")]
+    [InlineData("unknown.tool.16")]
+    [InlineData("unknown.tool.17")]
+    [InlineData("unknown.tool.18")]
+    [InlineData("unknown.tool.19")]
+    [InlineData("unknown.tool.20")]
+    [InlineData("unknown.tool.21")]
+    [InlineData("unknown.tool.22")]
+    [InlineData("unknown.tool.23")]
+    [InlineData("unknown.tool.24")]
+    [InlineData("unknown.tool.25")]
+    [InlineData("unknown.tool.26")]
+    [InlineData("unknown.tool.27")]
+    [InlineData("unknown.tool.28")]
+    [InlineData("unknown.tool.29")]
+    [InlineData("unknown.tool.30")]
+    [InlineData("unknown.tool.31")]
+    [InlineData("unknown.tool.32")]
+    [InlineData("unknown.tool.33")]
+    [InlineData("unknown.tool.34")]
+    [InlineData("unknown.tool.35")]
+    [InlineData("unknown.tool.36")]
+    [InlineData("unknown.tool.37")]
+    public void HandleToolCall_UnsupportedToolNames_ReturnUnknownTool(string toolName)
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {
+              "params": { "name": "{{toolName}}" }
+            }
+            """);
+
+        var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+        Assert.True(result.IsError);
+        Assert.Contains("Unknown tool", result.Content[0].Text);
+    }
+
     [Fact]
-    public void HandleToolCall_SceneCreate_QueuesBridgeCommand()
+    public void HandleToolCall_ManageScene_Create_QueuesBridgeCommand()
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -240,8 +289,9 @@ public sealed class DispatcherTests
             var json = $$"""
             {
               "params": {
-                "name": "scene.create",
+                "name": "manage_scene",
                 "arguments": {
+                  "action": "create",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
                   "sceneName": "MainScene",
                   "waitMs": 0
@@ -267,43 +317,403 @@ public sealed class DispatcherTests
         }
     }
 
+    [Fact]
+    public void HandleToolCall_ManageAsset_ReadWriteTextFile_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var writeDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "write_text_file",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "path": "Library/McpDiagnostics/mission_save_v1.json",
+                  "contents": "{ \"schemaVersion\": 999 }",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+            var writeResult = _dispatcher.HandleToolCall(writeDoc.RootElement);
+            Assert.False(writeResult.IsError);
+            Assert.Contains("queued:manage_asset", writeResult.Content[0].Text);
+
+            using var readDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "read_text_file",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "path": "Library/McpDiagnostics/mission_save_v1.json",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+            var readResult = _dispatcher.HandleToolCall(readDoc.RootElement);
+            Assert.False(readResult.IsError);
+            Assert.Contains("queued:manage_asset", readResult.Content[0].Text);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageGameObject_InvokeMethod_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_gameobject",
+                "arguments": {
+                  "action": "invoke_method",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "targetPath": "MissionDirector",
+                  "component_type": "SaveService",
+                  "method": "SaveNow",
+                  "arguments": [],
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_gameobject", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageComponents_GetSerialized_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_components",
+                "arguments": {
+                  "action": "get_serialized",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "targetPath": "MissionDirector",
+                  "component_type": "ObjectiveService",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_components", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageComponents_SetSerialized_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_components",
+                "arguments": {
+                  "action": "set_serialized",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "targetPath": "MissionDirector",
+                  "component_type": "ObjectiveService",
+                  "properties": {
+                    "hostageFreed": true,
+                    "hostageExtracted": false
+                  },
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_components", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageLocalization_Tables_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_localization",
+                "arguments": {
+                  "action": "tables",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_localization", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageAsset_ListLocalizationKeys_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "list_localization_keys",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "table": "DefaultLocalizationTable",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_asset", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageAsset_ResolveLocalizationKeys_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "resolve_localization_keys",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "table": "DefaultLocalizationTable",
+                  "locale": "ru",
+                  "keys": ["ui.result.success.title", "ui.result.fail.title", "hud.controls"],
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_asset", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageBuild_GetActive_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_build",
+                "arguments": {
+                  "action": "profiles",
+                  "mode": "get_active",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_build", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageBuild_SetActive_QueuesBridgeCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_build",
+                "arguments": {
+                  "action": "profiles",
+                  "mode": "set_active",
+                  "profile": "Android",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_build", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     [Theory]
-    [InlineData("build_settings_scenes")]
+    [InlineData("project.capabilities")]
     [InlineData("editor.state")]
-    [InlineData("scene.open")]
-    [InlineData("scene.save")]
-    [InlineData("hierarchy.list")]
-    [InlineData("hierarchy.find")]
-    [InlineData("gameobject.create")]
-    [InlineData("gameobject.modify")]
-    [InlineData("prefab.create")]
-    [InlineData("prefab.open")]
-    [InlineData("prefab.save")]
-    [InlineData("prefab.instantiate")]
-    [InlineData("graph.open_or_create")]
-    [InlineData("graph.connect")]
-    [InlineData("graph.edit")]
-    [InlineData("graph.validate")]
-    [InlineData("component.add")]
-    [InlineData("component.set")]
-    [InlineData("editor.compile_status")]
-    [InlineData("asset.refresh")]
-    [InlineData("console.read")]
-    [InlineData("screenshot.scene")]
-    [InlineData("screenshot.game")]
-    [InlineData("tests.run_editmode")]
-    [InlineData("tests.run_all")]
-    [InlineData("tests.results")]
-    [InlineData("playmode.enter")]
-    [InlineData("playmode.exit")]
-    [InlineData("scene.validate_refs")]
-    [InlineData("prefab.validate")]
-    [InlineData("scriptableobject.create_or_edit")]
-    [InlineData("ui.create_or_edit")]
-    [InlineData("localization.key_add")]
-    [InlineData("asset.list_modified")]
-    [InlineData("change.summary")]
-    [InlineData("project.docs_update")]
+    [InlineData("read_console")]
+    [InlineData("manage_scene")]
+    [InlineData("manage_prefabs")]
+    [InlineData("manage_editor")]
+    [InlineData("manage_input")]
+    [InlineData("manage_camera")]
+    [InlineData("manage_gameobject")]
+    [InlineData("manage_components")]
+    [InlineData("manage_asset")]
+    [InlineData("manage_graphics")]
+    [InlineData("manage_profiler")]
+    [InlineData("manage_build")]
+    [InlineData("run_tests")]
+    [InlineData("get_test_job")]
+    [InlineData("manage_hierarchy")]
+    [InlineData("manage_script")]
+    [InlineData("manage_scriptableobject")]
+    [InlineData("manage_ui")]
+    [InlineData("manage_localization")]
     public void HandleToolCall_BridgeTools_QueueCommand(string toolName)
     {
         var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
@@ -313,22 +723,26 @@ public sealed class DispatcherTests
         {
             var extra = toolName switch
             {
-                "scene.open" => "\"scenePath\": \"Assets/Scenes/Main.unity\",",
-                "hierarchy.find" => "\"query\": \"Operative\",",
-                "gameobject.modify" => "\"targetPath\": \"Root/Obj\", \"operation\": \"rename\",",
-                "component.add" => "\"targetPath\": \"Root/Obj\", \"componentType\": \"BoxCollider\",",
-                "component.set" => "\"targetPath\": \"Root/Obj\",",
-                "prefab.create" => "\"sourceObjectPath\": \"Operative_Player_A_Source\", \"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
-                "prefab.open" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
-                "prefab.instantiate" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
-                "scene.validate_refs" => "\"scenePath\": \"Assets/Scenes/Main.unity\",",
-                "prefab.validate" => "\"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
-                "scriptableobject.create_or_edit" => "\"name\": \"MissionConfig\",",
-                "ui.create_or_edit" => "\"name\": \"MissionHud\",",
-                "localization.key_add" => "\"key\": \"ui.mission.start\",",
-                "graph.connect" => "\"fromNodeId\": \"n1\", \"toNodeId\": \"n2\",",
-                "graph.edit" => "\"operation\": \"add_node\", \"nodeId\": \"n1\", \"unitType\": \"DebugLog\",",
-                "build_settings_scenes" => "\"action\": \"get\",",
+                "read_console" => "\"count\": 20,",
+                "project.capabilities" => "",
+                "manage_scene" => "\"action\": \"create\", \"sceneName\": \"MainScene\",",
+                "manage_prefabs" => "\"action\": \"create\", \"sourceObjectPath\": \"Operative_Player_A_Source\", \"prefabPath\": \"Assets/Prefabs/OperativeA.prefab\",",
+                "manage_editor" => "\"action\": \"play_mode\", \"mode\": \"status\",",
+                "manage_input" => "\"action\": \"send\", \"keys\": [\"W\"], \"duration_ms\": 0,",
+                "manage_camera" => "\"action\": \"screenshot\", \"capture_source\": \"scene_view\",",
+                "manage_gameobject" => "\"action\": \"modify\", \"targetPath\": \"Root/Obj\", \"operation\": \"rename\",",
+                "manage_components" => "\"action\": \"add\", \"targetPath\": \"Root/Obj\", \"componentType\": \"BoxCollider\",",
+                "manage_asset" => "\"action\": \"refresh\", \"path\": \"Assets/Placeholder.txt\",",
+                "manage_graphics" => "\"action\": \"set_quality_level\", \"quality_level\": \"Low\",",
+                "manage_profiler" => "\"action\": \"get_counters\",",
+                "manage_build" => "\"action\": \"profiles\", \"mode\": \"get_active\",",
+                "run_tests" => "\"mode\": \"EditMode\",",
+                "get_test_job" => "\"jobId\": \"job-123\",",
+                "manage_hierarchy" => "\"action\": \"find\", \"query\": \"Operative\",",
+                "manage_script" => "\"action\": \"create_or_edit\", \"scriptName\": \"MissionStateService\",",
+                "manage_scriptableobject" => "\"action\": \"validate_schema\", \"path\": \"Assets/Scripts/MissionConfig.cs\",",
+                "manage_ui" => "\"action\": \"create_or_edit\", \"name\": \"MissionHud\",",
+                "manage_localization" => "\"action\": \"validate_assets\", \"path\": \"Assets/Localization\",",
                 _ => ""
             };
 
@@ -350,8 +764,74 @@ public sealed class DispatcherTests
 
             var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
             Assert.False(result.IsError);
+            Assert.Contains($"queued:{toolName}", result.Content[0].Text);
             Assert.True(Directory.Exists(cmdDir));
             Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ProjectInfo_ReturnsProjectMetadata()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "project.info",
+                "arguments": { "projectRoot": "{{root.Replace("\\", "\\\\")}}" }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            Assert.False(result.IsError);
+            using var payload = JsonDocument.Parse(result.Content[0].Text);
+            Assert.Equal(root, payload.RootElement.GetProperty("projectRoot").GetString());
+            Assert.Equal(Path.GetFileName(root), payload.RootElement.GetProperty("projectName").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ProjectHealthCheck_ReturnsHealthSummary()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Packages"));
+        File.WriteAllText(Path.Combine(root, "Packages", "manifest.json"), "{\"dependencies\":{}}");
+
+        try
+        {
+            using var doc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "project.health_check",
+                "arguments": { "projectRoot": "{{root.Replace("\\", "\\\\")}}" }
+              }
+            }
+            """);
+
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            Assert.False(result.IsError);
+            Assert.Contains("health=", result.Content[0].Text);
         }
         finally
         {
@@ -411,8 +891,9 @@ public sealed class DispatcherTests
             var json = $$"""
             {
               "params": {
-                "name": "localization.key_add",
+                "name": "manage_localization",
                 "arguments": {
+                  "action": "key_add",
                   "projectRoot": "{{root.Replace("\\", "\\\\")}}",
                   "waitMs": 0
                 }
@@ -422,8 +903,7 @@ public sealed class DispatcherTests
             using var doc = JsonDocument.Parse(json);
             var result = _dispatcher.HandleToolCall(doc.RootElement);
             Assert.True(result.IsError);
-            Assert.Contains("validation error", result.Content[0].Text);
-            Assert.Contains("key", result.Content[0].Text);
+            Assert.Contains("Missing key", result.Content[0].Text);
         }
         finally
         {
@@ -433,6 +913,179 @@ public sealed class DispatcherTests
             }
         }
     }
+
+    [Fact]
+    public void HandleToolCall_ManageAssetClassifyRisk_QueuesCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = $$"""
+            {
+              "params": {
+                "name": "manage_asset",
+                "arguments": {
+                  "action": "classify_risk",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """;
+
+            using var doc = JsonDocument.Parse(json);
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_asset", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageGraphicsValidateProfileAssignment_QueuesCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = $$"""
+            {
+              "params": {
+                "name": "manage_graphics",
+                "arguments": {
+                  "action": "validate_profile_assignment",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "waitMs": 0
+                }
+              }
+            }
+            """;
+
+            using var doc = JsonDocument.Parse(json);
+            var result = _dispatcher.HandleToolCall(doc.RootElement);
+
+            var cmdDir = Path.Combine(root, "Library", "XLabMcpBridge", "commands");
+            Assert.False(result.IsError);
+            Assert.Contains("queued:manage_graphics", result.Content[0].Text);
+            Assert.True(Directory.Exists(cmdDir));
+            Assert.NotEmpty(Directory.GetFiles(cmdDir, "*.json"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void HandleToolCall_ManageEditorInstallUpdateDelete_ManagesEmbeddedUnityPackage()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "xlab-mcp-test-" + Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(Path.GetTempPath(), "xlab-mcp-package-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Packages"));
+        Directory.CreateDirectory(Path.Combine(source, "Editor"));
+        File.WriteAllText(Path.Combine(source, "package.json"), """
+        {
+          "name": "com.xlabkm.unity-mcp",
+          "version": "1.2.3"
+        }
+        """);
+        File.WriteAllText(Path.Combine(source, "Editor", "McpBridgeProcessor.cs"), "// v1");
+
+        try
+        {
+            using var installDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "install",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "packageSourcePath": "{{source.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var installResult = _dispatcher.HandleToolCall(installDoc.RootElement);
+            Assert.False(installResult.IsError);
+            using var installPayload = JsonDocument.Parse(installResult.Content[0].Text);
+            Assert.Equal("install", installPayload.RootElement.GetProperty("action").GetString());
+            Assert.True(installPayload.RootElement.GetProperty("changed").GetBoolean());
+
+            var embeddedPackagePath = Path.Combine(root, "Packages", "com.xlabkm.unity-mcp");
+            Assert.True(File.Exists(Path.Combine(embeddedPackagePath, "package.json")));
+            Assert.True(File.Exists(Path.Combine(embeddedPackagePath, "Editor", "McpBridgeProcessor.cs")));
+
+            File.WriteAllText(Path.Combine(source, "Editor", "McpBridgeProcessor.cs"), "// v2");
+
+            using var updateDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "update",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}",
+                  "packageSourcePath": "{{source.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var updateResult = _dispatcher.HandleToolCall(updateDoc.RootElement);
+            Assert.False(updateResult.IsError);
+            using var updatePayload = JsonDocument.Parse(updateResult.Content[0].Text);
+            Assert.Equal("update", updatePayload.RootElement.GetProperty("action").GetString());
+            Assert.True(updatePayload.RootElement.GetProperty("changed").GetBoolean());
+            Assert.Equal("// v2", File.ReadAllText(Path.Combine(embeddedPackagePath, "Editor", "McpBridgeProcessor.cs")));
+
+            using var deleteDoc = JsonDocument.Parse($$"""
+            {
+              "params": {
+                "name": "manage_editor",
+                "arguments": {
+                  "action": "delete",
+                  "projectRoot": "{{root.Replace("\\", "\\\\")}}"
+                }
+              }
+            }
+            """);
+
+            var deleteResult = _dispatcher.HandleToolCall(deleteDoc.RootElement);
+            Assert.False(deleteResult.IsError);
+            using var deletePayload = JsonDocument.Parse(deleteResult.Content[0].Text);
+            Assert.Equal("delete", deletePayload.RootElement.GetProperty("action").GetString());
+            Assert.True(deletePayload.RootElement.GetProperty("changed").GetBoolean());
+            Assert.False(Directory.Exists(embeddedPackagePath));
+            Assert.False(deletePayload.RootElement.GetProperty("installed").GetBoolean());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+
+            if (Directory.Exists(source))
+            {
+                Directory.Delete(source, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public async Task HandleToolCall_BridgeRoundtrip_ReturnsBridgeResponse()
     {

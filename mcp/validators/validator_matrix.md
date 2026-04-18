@@ -7,25 +7,25 @@
 - `scene.detect_reference_regressions`
 
 ## Graph safety
-- `graph.inspect_asset`
-- `graph.validate`
-- `graph.validate_reaction_density`
-- `graph.export_review_summary`
+- `manage_graph(action="validate")`
+- `manage_graph(action="inspect_asset")`
+- `manage_graph(action="validate_reaction_density")`
+- `manage_graph(action="export_review_summary")`
 
 ## Data and save safety
-- `scriptableobject.validate_schema`
+- `manage_scriptableobject(action="validate_schema")`
 - `save.validate_compatibility`
 - `save.validate_schema_versioning`
 - `save.validate_autosave_transitions`
 - `save.validate_metaprogression_partition`
 
 ## Localization and content
-- `localization.validate_assets`
-- `localization.validate_key_coverage`
-- `localization.validate_fallback_language`
+- `manage_localization(action="validate_assets")`
+- `manage_localization(action="validate_key_coverage")`
+- `manage_localization(action="validate_fallback_language")`
 
 ## Release and review
 - `release.preflight`
-- `quality.validate_profile_assignment`
-- `change.summary`
-- `change.classify_risk`
+- `manage_graphics(action="validate_profile_assignment")`
+- `manage_asset(action="change_summary")`
+- `manage_asset(action="classify_risk")`

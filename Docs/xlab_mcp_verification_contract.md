@@ -17,17 +17,20 @@ Define the minimum MCP `resources` and `tools` required for Codex App to execute
 - Windows readability/input sanity
 - final candidate verification gate
 
-This contract is intentionally aligned to the existing xLabMcp style documented in:
+This contract is intentionally aligned to the target xLabMcp style documented in:
 
 - `README.md`
 - `Docs/README.md`
 - `mcp/README.md`
 - `Docs/canonical_tools.md`
 
+The current runtime and Unity bridge expose a target-only public inventory; see
+`Docs/runtime_tools.md`.
+
 The contract must preserve the xLabMcp naming model:
 
 - use `xlabmcp://...` resources for read-only state
-- use the canonical tool names listed in `Docs/canonical_tools.md`
+- use the target canonical tool names listed in `Docs/canonical_tools.md`
 - only add new actions where the current Unity contract does not yet cover the required verification workflow
 
 ## Contract Principles
@@ -36,7 +39,7 @@ The contract must preserve the xLabMcp naming model:
    Read `xlabmcp://editor/state` and project/scene resources before mutating Editor state.
 
 2. No parallel contract fork.
-   Do not invent a second naming system or legacy alias set when the canonical tools document already defines the approved names.
+   Do not invent a second naming system when the canonical tools document already defines the approved names.
 
 3. Async jobs for long operations.
    Play mode transitions, tests, builds, profiler captures, and save fault-injection flows must return `job_id`.
@@ -72,6 +75,15 @@ Required fields:
 - `open_scenes`
 - `selected_build_target`
 - `quality_level`
+- `bridgeHealth`
+- `bridgeHealth.heartbeatAtUtc`
+- `bridgeHealth.heartbeatAgeMs`
+- `bridgeHealth.queueDepth`
+- `bridgeHealth.oldestCommandAgeMs`
+- `bridgeHealth.lastCommand`
+- `bridgeHealth.auditLogPath`
+- `bridgeHealth.state`
+- `bridgeHealth.recommendedAction`
 - `recommended_retry_after_ms`
 
 
@@ -160,7 +172,7 @@ Required fields:
 
 ### `xlabmcp://localization/tables`
 
-Status: new resource recommended.
+Status: implemented in current runtime.
 
 Required fields:
 
@@ -209,6 +221,31 @@ Return shape:
 - `timestamp`
 - `file`
 - `line`
+
+
+
+### `project.capabilities`
+
+Status: live bridge capability probe.
+
+Purpose:
+
+Return a machine-readable snapshot of what the connected Unity bridge can actually do right now, including readiness flags and supported tool/action combinations.
+
+Required fields:
+
+- `tool`
+- `projectRoot`
+- `projectName`
+- `unityVersion`
+- `bridgePackage.name`
+- `bridgePackage.version`
+- `bridgePackage.buildHash`
+- `bridgeHealth`
+- `readyForTools`
+- `blockingReasons`
+- `readinessFlags`
+- `capabilities[]`
 
 
 
@@ -273,6 +310,206 @@ Response:
 Same schema as scene validation, with `prefabPath`.
 
 
+### `manage_scriptableobject(action="validate_schema")`
+
+Status: canonical schema validation action on the existing ScriptableObject tool family.
+
+Purpose:
+
+Validate the generated or edited ScriptableObject source for the expected asset-authoring shape.
+
+Request:
+
+```json
+{
+  "action": "validate_schema",
+  "path": "Assets/Scripts/MissionConfig.cs"
+}
+```
+
+Response:
+
+- `success`
+- `path`
+- `valid`
+- `summary.errors`
+- `summary.warnings`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_localization(action="validate_assets")`
+
+Status: canonical localization asset validation action.
+
+Purpose:
+
+Validate localization CSV assets for basic structural issues and unreadable files.
+
+Request:
+
+```json
+{
+  "action": "validate_assets",
+  "path": "Assets/Localization"
+}
+```
+
+Response:
+
+- `success`
+- `scopeRoot`
+- `summary.tables`
+- `summary.entries`
+- `summary.errors`
+- `summary.warnings`
+- `tables[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_localization(action="validate_key_coverage")`
+
+Status: canonical localization coverage action.
+
+Purpose:
+
+Check whether each locale has values for all keys in the selected localization scope.
+
+Request:
+
+```json
+{
+  "action": "validate_key_coverage",
+  "path": "Assets/Localization"
+}
+```
+
+Response:
+
+- `success`
+- `summary.tables`
+- `summary.locales`
+- `summary.keys`
+- `summary.missingEntries`
+- `tables[]`
+- `findings[]`
+- `coverage`
+- `recommendation`
+
+
+### `manage_localization(action="validate_fallback_language")`
+
+Status: canonical fallback-language validation action.
+
+Purpose:
+
+Confirm that the fallback locale exists and is fully populated for the selected scope.
+
+Request:
+
+```json
+{
+  "action": "validate_fallback_language",
+  "path": "Assets/Localization",
+  "fallbackLocale": "default"
+}
+```
+
+Response:
+
+- `success`
+- `fallbackLocale`
+- `summary.tables`
+- `summary.tablesWithFallbackProblems`
+- `tables[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_graphics(action="validate_profile_assignment")`
+
+Status: canonical quality/profile validation action.
+
+Purpose:
+
+Validate the current editor quality profile assignment and report the active quality level.
+
+Request:
+
+```json
+{
+  "action": "validate_profile_assignment"
+}
+```
+
+Response:
+
+- `success`
+- `buildTarget`
+- `activeQualityLevel`
+- `activeQualityIndex`
+- `summary.qualityProfiles`
+- `summary.errors`
+- `summary.warnings`
+- `profiles[]`
+- `findings[]`
+- `recommendation`
+
+
+### `manage_asset(action="change_summary")`
+
+Status: canonical change-summary action.
+
+Purpose:
+
+Summarize the current change set in a compact, machine-readable form.
+
+Request:
+
+```json
+{
+  "action": "change_summary"
+}
+```
+
+Response:
+
+- `success`
+- `tool`
+- `action`
+- `summary.modifiedAssets`
+- `changes[]`
+- `source`
+
+
+### `manage_asset(action="classify_risk")`
+
+Status: canonical change-risk classification action.
+
+Purpose:
+
+Classify the current change set into low, medium, or high risk and return a deterministic recommendation.
+
+Request:
+
+```json
+{
+  "action": "classify_risk"
+}
+```
+
+Response:
+
+- `success`
+- `tool`
+- `action`
+- `overallRisk`
+- `summary`
+- `changes[]`
+- `recommendation`
+
+
 ## 2. Play mode and scenario control
 
 ### `manage_editor(action="play_mode")`
@@ -310,6 +547,33 @@ Response:
 - `frame`
 - `time`
 - `activeScene`
+
+### `manage_editor(action="install"|"update"|"delete")`
+
+Status: canonical Unity MCP package lifecycle actions.
+
+Purpose:
+
+Allow the server runtime to install, refresh, or remove the embedded
+`Packages/com.xlabkm.unity-mcp` package in a target Unity project without
+requiring the bridge to already be active.
+
+Request fields:
+
+- `projectRoot`
+- `packageSourcePath` optional for `install` and `update`
+
+Response fields:
+
+- `tool`
+- `action`
+- `packageName`
+- `packageVersion`
+- `projectRoot`
+- `sourcePath`
+- `targetPath`
+- `changed`
+- `installed`
 
 
 ### `manage_gameobject(action="invoke_method")`
@@ -434,6 +698,19 @@ Required support for verification:
 - `include_image=true`
 - `max_resolution`
 - `view_target`
+- `scenario`
+- `step`
+- `label`
+- `outputPath`
+
+Required response fields:
+
+- `success`
+- `path`
+- `scenario`
+- `step`
+- `label`
+- `indexPath`
 
 
 
@@ -482,15 +759,11 @@ Each failed test must include:
 
 
 
-Note:
-
-`tests.results` is a legacy alias. Do not add it as a new active tool if `get_test_job` can return final structured results.
-
 ## 5. Localization verification
 
 ### `manage_asset(action="list_localization_keys")`
 
-Status: canonical localization key listing action.
+Status: canonical localization key listing action. Implemented in current runtime.
 
 Purpose:
 
@@ -517,7 +790,7 @@ Response:
 
 ### `manage_asset(action="resolve_localization_keys")`
 
-Status: canonical localization key resolution action.
+Status: canonical localization key resolution action. Implemented in current runtime.
 
 Request:
 
@@ -600,7 +873,7 @@ The game runtime should expose an Editor-safe override for save path during MCP 
 
 ### `manage_graphics(action="set_quality_level")`
 
-Status: canonical quality-level switch action.
+Status: canonical quality-level switch action. Implemented in current runtime.
 
 Request:
 
@@ -621,7 +894,7 @@ Response:
 
 ### `manage_profiler(action="get_counters")`
 
-Status: canonical profiler counter action.
+Status: canonical profiler counter action. Implemented in current runtime.
 
 Required support:
 
@@ -637,7 +910,7 @@ Required support:
 
 ### `manage_profiler(action="get_frame_timing")`
 
-Status: canonical frame-timing action.
+Status: canonical frame-timing action. Implemented in current runtime.
 
 Required fields:
 
@@ -651,7 +924,7 @@ Required fields:
 
 ### `manage_build(action="profiles")`
 
-Status: canonical build-profile action.
+Status: canonical build-profile action. Implemented in current runtime.
 
 Purpose:
 
@@ -660,8 +933,8 @@ List and switch Unity 6 Build Profiles without creating a parallel tool.
 Supported modes:
 
 - `list`
-- `set_active`
 - `get_active`
+- `set_active`
 
 Request example:
 
@@ -677,6 +950,8 @@ Response:
 
 - `profiles[]`
 - `active_profile`
+- `active_build_target`
+- `active_build_target_group`
 
 
 

@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "xLabMcp MCP Tool Contract",
+  "version": "0.5.0",
+  "description": "Target-only tool argument contract for the current xLabMcp runtime. Legacy step-based names have been removed.",
+  "tools": {
+    "project_root.set": {
+      "type": "object",
+      "properties": {
+        "projectRoot": { "type": "string" }
+      },
+      "required": ["projectRoot"],
+      "additionalProperties": true
+    },
+    "project.info": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    "project.health_check": {
+      "type": "object",
+      "properties": {
+        "projectRoot": { "type": "string" }
+      },
+      "required": ["projectRoot"],
+      "additionalProperties": true
+    },
+    "project.capabilities": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    "editor.state": {
+      "type": "object",
+      "properties": {
+        "waitMs": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "read_console": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "manage_asset": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create_folder",
+            "exists",
+            "refresh",
+            "list_modified",
+            "change_summary",
+            "classify_risk",
+            "docs_update",
+            "read_text_file",
+            "write_text_file",
+            "list_localization_keys",
+            "resolve_localization_keys"
+          ]
+        },
+        "path": { "type": "string" },
+        "folderPath": { "type": "string" },
+        "table": { "type": "string" },
+        "tableName": { "type": "string" },
+        "locale": { "type": "string" },
+        "keys": { "type": "array" },
+        "hours": { "type": "integer" },
+        "line": { "type": "string" },
+        "contents": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_hierarchy": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["list", "find"] },
+        "query": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_scene": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "open", "save", "validate_references"] },
+        "sceneName": { "type": "string" },
+        "scenePath": { "type": "string" },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_gameobject": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "modify", "invoke_method"] },
+        "target": { "type": "string" },
+        "targetPath": { "type": "string" },
+        "component_type": { "type": "string" },
+        "componentType": { "type": "string" },
+        "method": { "type": "string" },
+        "arguments": { "type": "array" },
+        "operation": { "type": "string" },
+        "active": { "type": "boolean" },
+        "newName": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_components": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["add", "set", "get_serialized", "set_serialized"] },
+        "target": { "type": "string" },
+        "targetPath": { "type": "string" },
+        "component_type": { "type": "string" },
+        "componentType": { "type": "string" },
+        "properties": { "type": "object" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "manage_script": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create_or_edit"] },
+        "scriptName": { "type": "string" },
+        "path": { "type": "string" },
+        "mode": { "type": "string" },
+        "text": { "type": "string" },
+        "contents": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_scriptableobject": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create_or_edit", "validate_schema"] },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "mode": { "type": "string" },
+        "text": { "type": "string" },
+        "contents": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_prefabs": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "open", "save", "instantiate", "validate_references"] },
+        "prefabPath": { "type": "string" },
+        "sourceObjectPath": { "type": "string" },
+        "sourcePath": { "type": "string" },
+        "sourceObjectName": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_graph": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["open_or_create", "connect", "edit", "validate"] },
+        "graphName": { "type": "string" },
+        "fromNodeId": { "type": "string" },
+        "toNodeId": { "type": "string" },
+        "sourceNodeId": { "type": "string" },
+        "targetNodeId": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "operation": { "type": "string" },
+        "nodeId": { "type": "string" },
+        "unitType": { "type": "string" },
+        "patch": { "type": "string" },
+        "text": { "type": "string" },
+        "kind": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_ui": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create_or_edit"] },
+        "name": { "type": "string" },
+        "mode": { "type": "string" },
+        "text": { "type": "string" },
+        "contents": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_localization": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["key_add", "tables", "validate_assets", "validate_key_coverage", "validate_fallback_language"]
+        },
+        "key": { "type": "string" },
+        "value": { "type": "string" },
+        "defaultValue": { "type": "string" },
+        "path": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_editor": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["play_mode", "status", "compile_status", "install", "update", "delete"] },
+        "mode": { "type": "string" },
+        "waitMs": { "type": "integer" },
+        "packageSourcePath": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_input": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["send"] },
+        "keys": { "type": "array" },
+        "mouse_position": { "type": "array" },
+        "mouse_buttons": { "type": "array" },
+        "duration_ms": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "manage_camera": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["screenshot"] },
+        "capture_source": { "type": "string" },
+        "scenario": { "type": "string" },
+        "step": { "type": "string" },
+        "label": { "type": "string" },
+        "outputPath": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_graphics": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["set_quality_level", "validate_profile_assignment"] },
+        "quality_level": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "manage_profiler": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["get_counters", "get_frame_timing"] }
+      },
+      "additionalProperties": true
+    },
+    "manage_build": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["profiles", "scenes"] },
+        "mode": { "type": "string", "enum": ["list", "get_active", "set_active"] },
+        "profile": { "type": "string" },
+        "buildTarget": { "type": "string" },
+        "target": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "run_tests": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["EditMode", "PlayMode", "All"] }
+      },
+      "additionalProperties": true
+    },
+    "get_test_job": {
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
