@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -433,7 +433,7 @@ public sealed class McpRequestDispatcher
         sb.AppendLine($"# Feature Backlog: {f}").AppendLine().AppendLine("## Goals");
         if (goals.Count == 0) sb.AppendLine("- Define gameplay intent for this feature");
         else foreach (var g in goals) sb.AppendLine($"- {g}");
-        sb.AppendLine().AppendLine("## Codex Tasks").AppendLine("- [ ] Scene updates").AppendLine("- [ ] Script updates");
+        sb.AppendLine().AppendLine("## Antigravity Tasks").AppendLine("- [ ] Scene updates").AppendLine("- [ ] Script updates");
         File.WriteAllText(p, sb.ToString(), Encoding.UTF8);
         return Ok($"Feature backlog created: {p}");
     }

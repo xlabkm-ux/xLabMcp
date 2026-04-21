@@ -6,7 +6,7 @@ Scope: Unity-side verification for the core xLabMcp gameplay, safety, and releas
 
 ## Goal
 
-Define the minimum MCP `resources` and `tools` required for Codex App to execute Unity verification for:
+Define the minimum MCP `resources` and `tools` required for Antigravity App to execute Unity verification for:
 
 - scene/prefab reference sweep
 - combat/perception regression scenarios
@@ -663,7 +663,7 @@ Status: canonical input-synthesis action.
 
 Reason:
 
-The current skill/tool examples cover project input configuration but do not expose runtime input injection. For autonomous gameplay verification, Codex needs keyboard/mouse event synthesis during Play Mode.
+The current skill/tool examples cover project input configuration but do not expose runtime input injection. For autonomous gameplay verification, Antigravity needs keyboard/mouse event synthesis during Play Mode.
 
 Request:
 
@@ -982,9 +982,9 @@ This contract should not add:
 
 ## Acceptance Criteria
 
-The xLabMcp bridge is ready for Codex-driven verification when:
+The xLabMcp bridge is ready for Antigravity-driven verification when:
 
-- Codex can run the full verification pass without manual clicking in Unity
+- Antigravity can run the full verification pass without manual clicking in Unity
 - all findings are returned as structured payloads
 - test failures include names and stack traces
 - platform/profile changes are reversible and observable
