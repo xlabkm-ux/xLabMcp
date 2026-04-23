@@ -1166,6 +1166,8 @@ public sealed class McpServer
             if (line == null) break;
             if (string.IsNullOrWhiteSpace(line)) continue;
 
+            if (line.Contains(':') && !line.TrimStart().StartsWith("{")) continue;
+
             try
             {
                 using var doc = JsonDocument.Parse(line);
@@ -1173,7 +1175,6 @@ public sealed class McpServer
             }
             catch (Exception ex)
             {
-                // Silently skip non-json lines or log to stderr
                 Console.Error.WriteLine($"JSON Parse Error: {ex.Message}");
             }
         }
