@@ -1160,7 +1160,23 @@ public sealed class McpServer
 
     public void Run()
     {
-        while (TryReadMessage(out var req)) using (req) HandleRequest(req.RootElement);
+        while (true)
+        {
+            var line = ReadLineAscii();
+            if (line == null) break;
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                HandleRequest(doc.RootElement);
+            }
+            catch (Exception ex)
+            {
+                // Silently skip non-json lines or log to stderr
+                Console.Error.WriteLine($"JSON Parse Error: {ex.Message}");
+            }
+        }
     }
 
     private void HandleRequest(JsonElement root)
@@ -1236,9 +1252,8 @@ public sealed class McpServer
     private void WriteEnvelope(object envelope)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, JsonOptions);
-        var header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
-        _stdout.Write(header, 0, header.Length);
         _stdout.Write(payload, 0, payload.Length);
+        _stdout.Write(new byte[] { (byte)'\n' }, 0, 1);
         _stdout.Flush();
     }
 }
