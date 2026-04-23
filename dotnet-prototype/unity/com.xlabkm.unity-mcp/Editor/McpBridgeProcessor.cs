@@ -154,6 +154,8 @@ namespace XLab.UnityMcp.Editor
             return command switch
             {
                 "editor.state" => EditorState(),
+                "project.info" => ProjectCapabilities(),
+                "project.health_check" => ProjectCapabilities(),
                 "project.capabilities" => ProjectCapabilities(),
                 "read_console" => ConsoleRead(),
                 "manage_asset" => ManageAsset(raw),
@@ -4085,11 +4087,16 @@ namespace XLab.UnityMcp.Editor
 
     private static (bool, string) PrefabValidate(string raw)
     {
-        var prefabPath = JsonArgumentString(raw, "prefabPath") ?? JsonArgumentString(raw, "path");
+        var prefabPath = JsonArgumentString(raw, "prefabPath");
+        if (string.IsNullOrWhiteSpace(prefabPath))
+        {
+            prefabPath = JsonArgumentString(raw, "path");
+        }
         if (string.IsNullOrWhiteSpace(prefabPath))
         {
             return (false, "prefabPath is required");
         }
+        prefabPath = prefabPath!;
         prefabPath = prefabPath.Replace("\\", "/");
         if (!prefabPath.StartsWith("Assets/", StringComparison.Ordinal))
         {
@@ -4934,7 +4941,7 @@ namespace XLab.UnityMcp.Editor
         {
             return null;
         }
-        return JsonString(args, key);
+        return JsonString(args ?? string.Empty, key);
     }
 
     private static string[] JsonArgumentStringArray(string json, string key)
@@ -4943,6 +4950,7 @@ namespace XLab.UnityMcp.Editor
         {
             var args = ExtractJsonObjectValue(json, "arguments");
             var source = string.IsNullOrWhiteSpace(args) ? json : args;
+            source ??= string.Empty;
             var node = JsonNode.Parse(source) as JsonObject;
             if (node == null || !node.TryGetPropertyValue(key, out var valueNode) || valueNode is null)
             {

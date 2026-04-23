@@ -1,42 +1,64 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
-using System.Text;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace XLab.UnityMcp.Editor
 {
-public static class McpPrototypeMenu
-{
-    [MenuItem("XLab/MCP/Start Prototype Server")]
-    public static void StartPrototypeServer()
+    public static class McpPrototypeMenu
     {
-        var serverPath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "dotnet-prototype", "src", "XLab.UnityMcp.Server", "bin", "Debug", "net8.0", "XLab.UnityMcp.Server.exe"));
-        if (!File.Exists(serverPath))
+        [MenuItem("XLab/MCP/Start Prototype Server")]
+        public static void StartPrototypeServer()
         {
-            UnityEngine.Debug.LogWarning($"MCP server binary not found: {serverPath}");
-            return;
+            var serverPath = ResolveServerPath();
+            if (serverPath == null)
+            {
+                Debug.LogWarning($"MCP server binary not found. Checked: {string.Join("; ", ServerPathCandidates())}");
+                return;
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = serverPath,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                Debug.LogError("Failed to start MCP server process.");
+                return;
+            }
+
+            Debug.Log($"MCP server started (pid={proc.Id})");
         }
 
-        var psi = new ProcessStartInfo
+        private static string? ResolveServerPath()
         {
-            FileName = serverPath,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
+            foreach (var candidate in ServerPathCandidates())
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
 
-        var proc = Process.Start(psi);
-        if (proc == null)
-        {
-            UnityEngine.Debug.LogError("Failed to start MCP server process.");
-            return;
+            return null;
         }
 
-        UnityEngine.Debug.Log($"MCP server started (pid={proc.Id})");
+        private static string[] ServerPathCandidates()
+        {
+            return new[]
+            {
+                Environment.GetEnvironmentVariable("XLAB_MCP_SERVER_PATH"),
+                Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "XLabMcpServerRuntime", "XLab.UnityMcp.Server.exe")),
+            };
+        }
     }
-}
 }
