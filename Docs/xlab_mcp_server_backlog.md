@@ -7,7 +7,7 @@ Bridge target: Unity Editor + `Library/XLabMcpBridge`
 
 ## Goal
 
-Convert the current xLabMcp bridge/server into a stable Unity-native automation layer that lets Antigravity App run gameplay development and verification without manual Editor clicking.
+Convert the current xLabMcp bridge/server into a stable Unity-native automation layer that lets the Codex agent run gameplay development and verification without manual Editor clicking.
 
 This backlog is based on the legacy notes below, which are now archived:
 
@@ -74,7 +74,7 @@ Confirmed weak areas:
 - Complexity: `M`
 - Status: completed
 - Goal: add live `tools.list`/capability probe from the bridge, not just server-side declarations
-- Why: Antigravity must know what is actually callable in the connected Unity instance before every step
+- Why: Codex must know what is actually callable in the connected Unity instance before every step
 - Deliverables:
   - capability endpoint or resource with `tool`, `action`, `supported`, `notes`
   - version/build hash of active bridge package
@@ -140,7 +140,7 @@ Confirmed weak areas:
 - Complexity: `M`
 - Status: completed
 - Goal: add `manage_editor(action="play_mode")` with `enter`, `exit`, `status`
-- Why: play scenario sweeps must be controllable from Antigravity without manual clicks
+- Why: play scenario sweeps must be controllable from Codex without manual clicks
 - Deliverables:
   - async job-based enter/exit
   - play state polling
@@ -156,7 +156,7 @@ Confirmed weak areas:
 - Complexity: `L`
 - Status: completed
 - Goal: add `manage_input(action="send")`
-- Why: without input synthesis, Antigravity cannot fully drive combat/hostage/readability scenarios
+- Why: without input synthesis, Codex cannot fully drive combat/hostage/readability scenarios
 - Deliverables:
   - key press / key hold
   - mouse position + mouse button events
@@ -225,7 +225,7 @@ Confirmed weak areas:
 - Complexity: `M`
 - Status: completed
 - Goal: add `manage_asset(action="list_localization_keys")` and `manage_asset(action="resolve_localization_keys")`
-- Why: Antigravity needs deterministic key-coverage checks for `ru` and `en`
+- Why: Codex needs deterministic key-coverage checks for `ru` and `en`
 - Deliverables:
   - list keys by table
   - resolve values by locale
@@ -407,7 +407,7 @@ Confirmed weak areas:
 
 Outcome:
 
-- Antigravity can reliably preflight, enter Play Mode, validate scene/prefab refs, run tests, and drive gameplay scenarios.
+- Codex can reliably preflight, enter Play Mode, validate scene/prefab refs, run tests, and drive gameplay scenarios.
 
 ### Wave 2 - Close verification end-to-end
 
@@ -422,7 +422,7 @@ Outcome:
 
 Outcome:
 
-- Antigravity can perform the full verification matrix for `xLabMcp` without manual Unity interaction.
+- Codex can perform the full verification matrix for `xLabMcp` without manual Unity interaction.
 
 ### Wave 3 - Harden the platform
 
@@ -450,7 +450,7 @@ Outcome:
 The `xLabMcp` server backlog can be considered successfully delivered for current project goals when:
 
 - Wave 1 and Wave 2 are complete
-- Antigravity can execute the full verification workflow from prompt alone
+- Codex can execute the full verification workflow from prompt alone
 - final test results are deterministic
 - ref-validation findings are structured and actionable
 - localization coverage can be checked by locale and key
